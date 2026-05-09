@@ -1,0 +1,13 @@
+# Compiled binaries built into the source tree
+/tunetag
+/cmd/tunetag/tunetag
+
+# Go test artefacts
+*.test
+*.out
+coverage.txt
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*~
