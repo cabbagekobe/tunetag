@@ -24,7 +24,9 @@ func Detect(rs io.ReadSeeker) (Format, error) {
 	}
 	var hdr [12]byte
 	n, err := io.ReadFull(rs, hdr[:])
-	if err != nil && err != io.ErrUnexpectedEOF {
+	// Short streams are common and not an error: just sniff what we
+	// got and decide based on the bytes that did arrive.
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 		return FormatUnknown, err
 	}
 	if n >= 3 && hdr[0] == 'I' && hdr[1] == 'D' && hdr[2] == '3' {

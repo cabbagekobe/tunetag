@@ -43,16 +43,19 @@ var ErrUnsupportedVersion = errors.New("id3v2: unsupported tag version")
 func readHeader(r io.Reader) (Header, error) {
 	var b [HeaderSize]byte
 	n, err := io.ReadFull(r, b[:])
-	if err != nil {
-		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-			if n == 0 {
-				return Header{}, ErrNoTag
-			}
-		}
+	// Tolerate truncated reads here so we can decide between
+	// "no ID3 tag at all" and "tag header truncated" using the
+	// bytes we did manage to read.
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 		return Header{}, err
 	}
-	if b[0] != 'I' || b[1] != 'D' || b[2] != '3' {
+	// Need at least the 3 magic bytes to even consider this a tag.
+	if n < 3 || b[0] != 'I' || b[1] != 'D' || b[2] != '3' {
 		return Header{}, ErrNoTag
+	}
+	// Magic matched but the rest of the 10-byte header is missing.
+	if n < HeaderSize {
+		return Header{}, fmt.Errorf("id3v2: tag header truncated: have %d bytes, want %d", n, HeaderSize)
 	}
 	if b[3] < 2 || b[3] > 4 {
 		return Header{}, fmt.Errorf("%w: %d.%d", ErrUnsupportedVersion, b[3], b[4])
