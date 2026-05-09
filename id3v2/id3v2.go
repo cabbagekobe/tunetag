@@ -13,12 +13,17 @@
 //
 // Writing
 //
-// Encode emits a tag at t.Version, which must be V23 or V24 — v2.2
-// is read-only because re-encoding to v2.2 would require demoting
-// every frame body and is rarely useful. The default Padding is
-// 1024 bytes; raise it to leave room for in-place edits in the
-// surrounding file. Tag-level unsynchronisation and the extended
-// header are never emitted.
+// Encode emits a tag at t.Version. V23 and V24 are first-class; V22
+// is also supported but the writer errors out on any frame whose
+// canonical 4-character ID has no v2.2 equivalent (PRIV, TSO2 and
+// other v2.4-only fields). The default Padding is 1024 bytes; raise
+// it to leave room for in-place edits in the surrounding file.
+//
+// The v2.4 footer flag is honoured: setting Flags=FlagFooter on a
+// V24 tag emits a 10-byte "3DI" trailer after the frames and forces
+// padding to 0 (the spec requires footer and padding be exclusive).
+// Tag-level unsynchronisation and the extended header are never
+// emitted on output.
 //
 // A *Tag is not safe for concurrent use.
 package id3v2
@@ -94,9 +99,16 @@ func (t *Tag) Encode(w io.Writer) error {
 // is supplied explicitly. WriteFile uses this to grow the in-place
 // padding so that the encoded tag exactly fills the bytes occupied
 // by the previous tag.
+//
+// When the footer flag is set (v2.4 only), padding is forced to 0
+// per the spec — the two are mutually exclusive — and a 10-byte
+// "3DI" footer is appended after the frames. The footer carries the
+// same flags and a synchsafe payload size identical to the header's.
 func (t *Tag) encodeWithPadding(w io.Writer, pad int) error {
-	if t.Version != V23 && t.Version != V24 {
-		return fmt.Errorf("id3v2: writing %s is not supported (use V23 or V24)", t.Version)
+	switch t.Version {
+	case V22, V23, V24:
+	default:
+		return fmt.Errorf("id3v2: writing %s is not supported", t.Version)
 	}
 	var framesBuf bytes.Buffer
 	for _, f := range t.Frames {
@@ -108,8 +120,12 @@ func (t *Tag) encodeWithPadding(w io.Writer, pad int) error {
 	if pad < 0 {
 		pad = 0
 	}
-	if flags&FlagFooter != 0 {
-		return errors.New("id3v2: footer (v2.4) encoding is not yet implemented")
+	hasFooter := flags&FlagFooter != 0
+	if hasFooter {
+		if t.Version != V24 {
+			return fmt.Errorf("id3v2: footer flag requires v2.4, got %s", t.Version)
+		}
+		pad = 0
 	}
 	payloadSize := uint32(framesBuf.Len() + pad)
 	h := Header{Version: t.Version, Flags: flags, Size: payloadSize}
@@ -124,13 +140,38 @@ func (t *Tag) encodeWithPadding(w io.Writer, pad int) error {
 			return err
 		}
 	}
+	if hasFooter {
+		if err := writeFooter(w, t.Version, flags, payloadSize); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// writeFooter writes a 10-byte ID3v2.4 footer ("3DI" + version + 0
+// + flags + synchsafe size). The footer's payload size matches the
+// header's so readers can locate the tag from either end.
+func writeFooter(w io.Writer, v Version, flags Flags, payloadSize uint32) error {
+	var b [HeaderSize]byte
+	b[0], b[1], b[2] = '3', 'D', 'I'
+	b[3] = byte(v)
+	b[4] = 0
+	b[5] = byte(flags)
+	sz, err := encodeSynchsafe(payloadSize)
+	if err != nil {
+		return err
+	}
+	copy(b[6:10], sz[:])
+	_, err = w.Write(b[:])
+	return err
 }
 
 // framesEncodedSize returns the length of the encoded frames (no
 // header, no padding) for sizing decisions in WriteFile.
 func (t *Tag) framesEncodedSize() (uint32, error) {
-	if t.Version != V23 && t.Version != V24 {
+	switch t.Version {
+	case V22, V23, V24:
+	default:
 		return 0, fmt.Errorf("id3v2: writing %s is not supported", t.Version)
 	}
 	var buf bytes.Buffer

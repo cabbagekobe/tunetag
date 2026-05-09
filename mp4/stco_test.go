@@ -3,7 +3,6 @@ package mp4
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -152,12 +151,12 @@ func TestPatchSTCO_MdatBeforeMoov_NoPatchNeeded(t *testing.T) {
 	}
 }
 
-func TestPatchSTCO_OverflowReturnsError(t *testing.T) {
+func TestPatchSTCO_OverflowAutoPromotesToCo64(t *testing.T) {
 	// 0xFFFFFFFF is the maximum legal stco entry; any positive delta
-	// must overflow.
+	// forces a co64 promotion.
 	raw := testutil.BuildMinimal(testutil.MinimalOptions{
 		Title:    "tiny",
-		WithStco: []uint32{0xFFFFFFFF},
+		WithStco: []uint32{0xFFFFFFFF, 0xFFFFFFFE},
 	})
 	dir := t.TempDir()
 	p := filepath.Join(dir, "x.m4a")
@@ -168,11 +167,101 @@ func TestPatchSTCO_OverflowReturnsError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.Tag.SetTitle(string(bytes.Repeat([]byte("z"), 256)))
-	err = f.WriteFile(p)
-	if !errors.Is(err, ErrStcoOverflow) {
-		t.Fatalf("got %v, want ErrStcoOverflow", err)
+	longTitle := string(bytes.Repeat([]byte("z"), 256))
+	f.Tag.SetTitle(longTitle)
+	if err := f.WriteFile(p); err != nil {
+		t.Fatalf("WriteFile: %v", err)
 	}
+
+	// After auto-promotion, the file should contain co64 (not stco)
+	// holding the original values shifted by the moov delta.
+	values, foundCo64 := readFirstChunkOffsets(t, p)
+	if !foundCo64 {
+		t.Fatalf("expected co64 box after auto-promotion")
+	}
+	if len(values) != 2 {
+		t.Fatalf("entries = %d, want 2", len(values))
+	}
+	if values[0] <= 0xFFFFFFFF {
+		t.Errorf("entry 0 = %d, expected > 32-bit max after promotion", values[0])
+	}
+
+	// Title round-trip preserved.
+	out, err := Read(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Tag.Title() != longTitle {
+		t.Errorf("Title not preserved")
+	}
+}
+
+// readFirstChunkOffsets walks the moov box and returns either stco
+// (32-bit) or co64 (64-bit) values for the first track. The bool
+// return indicates whether the box was co64.
+func readFirstChunkOffsets(t *testing.T, p string) ([]uint64, bool) {
+	t.Helper()
+	f, err := os.Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	info, _ := f.Stat()
+	tops, err := scanTopLevel(f, info.Size())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range tops {
+		if !b.Type.Equal("moov") {
+			continue
+		}
+		body, err := readBoxBody(f, b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		vals, isCo64, ok := findFirstChunkOffsetBox(body)
+		if ok {
+			return vals, isCo64
+		}
+	}
+	return nil, false
+}
+
+func findFirstChunkOffsetBox(body []byte) ([]uint64, bool, bool) {
+	pos := 0
+	for pos < len(body) {
+		if pos+8 > len(body) {
+			return nil, false, false
+		}
+		size := binary.BigEndian.Uint32(body[pos : pos+4])
+		typ := string(body[pos+4 : pos+8])
+		if size < 8 || int(size) > len(body)-pos {
+			return nil, false, false
+		}
+		child := body[pos+8 : pos+int(size)]
+		switch typ {
+		case "stco":
+			count := binary.BigEndian.Uint32(child[4:8])
+			out := make([]uint64, count)
+			for i := uint32(0); i < count; i++ {
+				out[i] = uint64(binary.BigEndian.Uint32(child[8+4*i : 12+4*i]))
+			}
+			return out, false, true
+		case "co64":
+			count := binary.BigEndian.Uint32(child[4:8])
+			out := make([]uint64, count)
+			for i := uint32(0); i < count; i++ {
+				out[i] = binary.BigEndian.Uint64(child[8+8*i : 16+8*i])
+			}
+			return out, true, true
+		case "trak", "mdia", "minf", "stbl":
+			if vals, co64, ok := findFirstChunkOffsetBox(child); ok {
+				return vals, co64, true
+			}
+		}
+		pos += int(size)
+	}
+	return nil, false, false
 }
 
 func TestPatchCO64_RoundTrip(t *testing.T) {

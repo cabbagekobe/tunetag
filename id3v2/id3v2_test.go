@@ -221,17 +221,80 @@ func TestRoundTrip_V24(t *testing.T) {
 	}
 }
 
-func TestEncode_V22Rejected(t *testing.T) {
-	tag := &Tag{Version: V22}
-	if err := tag.Encode(&bytes.Buffer{}); err == nil {
-		t.Fatal("expected error encoding v2.2")
+func TestEncode_FooterAppendsTrailer(t *testing.T) {
+	tag := &Tag{Version: V24, Flags: FlagFooter}
+	tag.SetTitle("Footer Test")
+	var buf bytes.Buffer
+	if err := tag.Encode(&buf); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	out := buf.Bytes()
+	if len(out) < HeaderSize*2 {
+		t.Fatalf("encoded too short for footer (%d bytes)", len(out))
+	}
+	footer := out[len(out)-HeaderSize:]
+	if footer[0] != '3' || footer[1] != 'D' || footer[2] != 'I' {
+		t.Errorf("footer magic = %q, want 3DI", footer[:3])
+	}
+	if footer[3] != byte(V24) {
+		t.Errorf("footer version = %d, want 4", footer[3])
+	}
+	// Footer flags must mirror the header's, including FlagFooter
+	// itself, so readers locating the tag from either end agree.
+	if out[5] != footer[5] {
+		t.Errorf("header flags 0x%02X != footer flags 0x%02X", out[5], footer[5])
+	}
+	if Flags(footer[5])&FlagFooter == 0 {
+		t.Errorf("footer flags 0x%02X missing FlagFooter bit", footer[5])
+	}
+	headerSize := decodeSynchsafe(out[6:10])
+	footerSize := decodeSynchsafe(footer[6:10])
+	if headerSize != footerSize {
+		t.Errorf("header size %d != footer size %d", headerSize, footerSize)
 	}
 }
 
-func TestEncode_FooterRejected(t *testing.T) {
-	tag := &Tag{Version: V24, Flags: FlagFooter}
+func TestEncode_FooterDisablesPadding(t *testing.T) {
+	tag := &Tag{Version: V24, Flags: FlagFooter, Padding: 1024}
+	tag.SetTitle("X")
+	var buf bytes.Buffer
+	if err := tag.Encode(&buf); err != nil {
+		t.Fatal(err)
+	}
+	frames, err := (&Tag{Version: V24, Frames: tag.Frames}).framesEncodedSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := HeaderSize + int(frames) + HeaderSize
+	if buf.Len() != want {
+		t.Errorf("encoded size = %d, want %d (header + frames + footer, no padding)", buf.Len(), want)
+	}
+}
+
+func TestEncode_FooterRejectedOnV23(t *testing.T) {
+	tag := &Tag{Version: V23, Flags: FlagFooter}
 	if err := tag.Encode(&bytes.Buffer{}); err == nil {
-		t.Fatal("expected error for footer flag")
+		t.Fatal("expected error for footer flag on v2.3")
+	}
+}
+
+func TestRoundTrip_V24WithFooter(t *testing.T) {
+	in := &Tag{Version: V24, Flags: FlagFooter}
+	in.SetTitle("Roundtrip with footer")
+	in.SetArtist("Tester")
+	var buf bytes.Buffer
+	if err := in.Encode(&buf); err != nil {
+		t.Fatal(err)
+	}
+	out, err := Read(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Title() != "Roundtrip with footer" {
+		t.Errorf("Title = %q", out.Title())
+	}
+	if out.Artist() != "Tester" {
+		t.Errorf("Artist = %q", out.Artist())
 	}
 }
 

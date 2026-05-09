@@ -9,10 +9,11 @@ import (
 	"path/filepath"
 )
 
-// ErrStcoOverflow is returned when patching a 32-bit stco entry
-// would push the value past 2^32 - 1. v1 does not auto-promote
-// stco→co64; users hitting this need a future release.
-var ErrStcoOverflow = errors.New("mp4: chunk offset would exceed 32-bit range; co64 promotion not implemented")
+// ErrStcoOverflow signals that a 32-bit stco entry would exceed
+// 2^32 - 1 once shifted by the requested delta. WriteFile uses this
+// internally as a trigger to retry the rewrite with stco→co64
+// promotion enabled, so callers normally never see it.
+var ErrStcoOverflow = errors.New("mp4: chunk offset exceeds 32-bit range")
 
 // patchMoovForRewrite produces a new moov body that has:
 //   - the udta/meta/ilst chain replaced with the current Tag
@@ -22,7 +23,12 @@ var ErrStcoOverflow = errors.New("mp4: chunk offset would exceed 32-bit range; c
 // chunkDelta should be the signed change in mdat offset (positive
 // when mdat moves later, negative when earlier). It must be 0 when
 // mdat sits before moov (in which case mdat does not move).
-func (f *File) patchMoovForRewrite(chunkDelta int64) ([]byte, error) {
+//
+// When promoteToCo64 is true, every stco encountered in the moov
+// hierarchy is rewritten as a co64 box (8-byte entries) regardless
+// of overflow. This is used by rewriteFile as a fallback after a
+// non-promoted attempt returned ErrStcoOverflow.
+func (f *File) patchMoovForRewrite(chunkDelta int64, promoteToCo64 bool) ([]byte, error) {
 	if !f.ilstFound {
 		return nil, errors.New("mp4: cannot rewrite moov without an existing ilst")
 	}
@@ -30,17 +36,18 @@ func (f *File) patchMoovForRewrite(chunkDelta int64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return rewriteMoov(f.rawMoov, newIlstBody, chunkDelta)
+	return rewriteMoov(f.rawMoov, newIlstBody, chunkDelta, promoteToCo64)
 }
 
 // rewriteMoov builds a new moov body by:
 //   - replacing the bytes of the inner ilst with newIlstBody
 //   - patching stco/co64 entries by delta when delta != 0
-func rewriteMoov(moovBody, newIlstBody []byte, delta int64) ([]byte, error) {
+//   - promoting stco to co64 when promoteToCo64 is true
+func rewriteMoov(moovBody, newIlstBody []byte, delta int64, promoteToCo64 bool) ([]byte, error) {
 	return rewriteContainer(moovBody, "moov", func(typ FourCC, body []byte) (FourCC, []byte, error) {
 		switch typ.String() {
 		case "trak":
-			out, err := rewriteTrak(body, delta)
+			out, err := rewriteTrak(body, delta, promoteToCo64)
 			return typ, out, err
 		case "udta":
 			out, err := rewriteUdta(body, newIlstBody)
@@ -73,45 +80,51 @@ func rewriteUdta(body, newIlstBody []byte) ([]byte, error) {
 	})
 }
 
-func rewriteTrak(body []byte, delta int64) ([]byte, error) {
+func rewriteTrak(body []byte, delta int64, promoteToCo64 bool) ([]byte, error) {
 	return rewriteContainer(body, "trak", func(typ FourCC, body []byte) (FourCC, []byte, error) {
 		if typ.Equal("mdia") {
-			out, err := rewriteMdia(body, delta)
+			out, err := rewriteMdia(body, delta, promoteToCo64)
 			return typ, out, err
 		}
 		return typ, body, nil
 	})
 }
 
-func rewriteMdia(body []byte, delta int64) ([]byte, error) {
+func rewriteMdia(body []byte, delta int64, promoteToCo64 bool) ([]byte, error) {
 	return rewriteContainer(body, "mdia", func(typ FourCC, body []byte) (FourCC, []byte, error) {
 		if typ.Equal("minf") {
-			out, err := rewriteMinf(body, delta)
+			out, err := rewriteMinf(body, delta, promoteToCo64)
 			return typ, out, err
 		}
 		return typ, body, nil
 	})
 }
 
-func rewriteMinf(body []byte, delta int64) ([]byte, error) {
+func rewriteMinf(body []byte, delta int64, promoteToCo64 bool) ([]byte, error) {
 	return rewriteContainer(body, "minf", func(typ FourCC, body []byte) (FourCC, []byte, error) {
 		if typ.Equal("stbl") {
-			out, err := rewriteStbl(body, delta)
+			out, err := rewriteStbl(body, delta, promoteToCo64)
 			return typ, out, err
 		}
 		return typ, body, nil
 	})
 }
 
-func rewriteStbl(body []byte, delta int64) ([]byte, error) {
+func rewriteStbl(body []byte, delta int64, promoteToCo64 bool) ([]byte, error) {
 	return rewriteContainer(body, "stbl", func(typ FourCC, body []byte) (FourCC, []byte, error) {
 		switch typ.String() {
 		case "stco":
-			if delta == 0 {
+			if delta == 0 && !promoteToCo64 {
 				return typ, body, nil
 			}
-			out, err := patchSTCO(body, delta)
-			return typ, out, err
+			newBody, becameCo64, err := patchOrPromoteSTCO(body, delta, promoteToCo64)
+			if err != nil {
+				return typ, nil, err
+			}
+			if becameCo64 {
+				return fourCC("co64"), newBody, nil
+			}
+			return typ, newBody, nil
 		case "co64":
 			if delta == 0 {
 				return typ, body, nil
@@ -151,17 +164,34 @@ func rewriteContainer(body []byte, parentName string,
 	return out.Bytes(), nil
 }
 
-// patchSTCO returns a copy of an stco body with every entry shifted
-// by delta. Returns ErrStcoOverflow when any value would leave the
-// 32-bit range.
-func patchSTCO(body []byte, delta int64) ([]byte, error) {
+// patchOrPromoteSTCO patches an stco body by delta. When
+// promoteToCo64 is false, returns ErrStcoOverflow if any value
+// would leave the 32-bit range. When promoteToCo64 is true, the
+// returned body is in co64 format (8-byte entries) and becameCo64
+// is true so the caller can rewrite the box type.
+func patchOrPromoteSTCO(body []byte, delta int64, promoteToCo64 bool) (newBody []byte, becameCo64 bool, err error) {
 	if len(body) < 8 {
-		return nil, errors.New("mp4: stco body too short")
+		return nil, false, errors.New("mp4: stco body too short")
 	}
 	count := binary.BigEndian.Uint32(body[4:8])
 	expected := 8 + int(count)*4
 	if len(body) < expected {
-		return nil, fmt.Errorf("mp4: stco truncated: have %d, want %d", len(body), expected)
+		return nil, false, fmt.Errorf("mp4: stco truncated: have %d, want %d", len(body), expected)
+	}
+	if promoteToCo64 {
+		out := make([]byte, 8+int(count)*8)
+		copy(out[:8], body[:8])
+		for i := uint32(0); i < count; i++ {
+			srcOff := 8 + 4*int(i)
+			dstOff := 8 + 8*int(i)
+			v := int64(binary.BigEndian.Uint32(body[srcOff : srcOff+4]))
+			nv := v + delta
+			if nv < 0 {
+				return nil, false, fmt.Errorf("mp4: chunk offset %d underflow on promotion", i)
+			}
+			binary.BigEndian.PutUint64(out[dstOff:dstOff+8], uint64(nv))
+		}
+		return out, true, nil
 	}
 	out := make([]byte, len(body))
 	copy(out[:8], body[:8])
@@ -170,11 +200,11 @@ func patchSTCO(body []byte, delta int64) ([]byte, error) {
 		v := int64(binary.BigEndian.Uint32(body[off : off+4]))
 		nv := v + delta
 		if nv < 0 || nv > 1<<32-1 {
-			return nil, ErrStcoOverflow
+			return nil, false, ErrStcoOverflow
 		}
 		binary.BigEndian.PutUint32(out[off:off+4], uint32(nv))
 	}
-	return out, nil
+	return out, false, nil
 }
 
 // patchCO64 returns a copy of a co64 body with every entry shifted
@@ -205,7 +235,9 @@ func patchCO64(body []byte, delta int64) ([]byte, error) {
 // rewriteFile performs a Tier 2/3 full rewrite of path with the
 // new moov in place. mdat is reproduced as-is (only its absolute
 // position changes); stco/co64 entries are patched in moov so they
-// continue to point at the right bytes.
+// continue to point at the right bytes. When patching would push a
+// 32-bit chunk offset past 2^32-1, every stco in the file is
+// promoted to co64 and the rewrite is retried.
 //
 // Layout strategy:
 //   - mdat-before-moov: trivial. Old layout: ftyp ... mdat ... moov [...].
@@ -237,28 +269,44 @@ func (f *File) rewriteFile(path string) error {
 		return ErrNoMoov
 	}
 
-	// Compute chunkDelta. If mdat is before moov (or absent), delta=0.
-	var chunkDelta int64
-	if mdatIdx >= 0 && mdatIdx > moovIdx {
-		// Build candidate moov to know its new size.
-		probe, err := f.patchMoovForRewrite(0)
+	// mdat-before-moov: chunk offsets do not change.
+	if mdatIdx < 0 || mdatIdx < moovIdx {
+		newMoov, err := f.patchMoovForRewrite(0, false)
 		if err != nil {
 			return err
 		}
-		oldMoovSize := int64(8 + len(f.rawMoov))
-		newMoovSize := int64(8 + len(probe))
-		chunkDelta = newMoovSize - oldMoovSize
+		return src.writeWithMoovReplaced(path, newMoov)
 	}
 
-	newMoovBody, err := f.patchMoovForRewrite(chunkDelta)
+	// mdat-after-moov: probe to compute chunkDelta, then patch.
+	// chunkDelta is the change in moov body size; the surrounding
+	// 8-byte moov header is constant on both sides so it cancels.
+	probe, err := f.patchMoovForRewrite(0, false)
 	if err != nil {
 		return err
 	}
+	chunkDelta := int64(len(probe)) - int64(len(f.rawMoov))
 
-	// Reconstruct the file: emit every top-level box in source order,
-	// substituting moov with the patched version. mdat and others are
-	// re-emitted from the source bytes verbatim.
-	return src.writeWithMoovReplaced(path, newMoovBody)
+	newMoov, err := f.patchMoovForRewrite(chunkDelta, false)
+	if err == nil {
+		return src.writeWithMoovReplaced(path, newMoov)
+	}
+	if !errors.Is(err, ErrStcoOverflow) {
+		return err
+	}
+
+	// Auto-promote: every stco becomes co64 (which grows moov by
+	// 4 bytes per entry), so recompute the delta before patching.
+	probe2, err := f.patchMoovForRewrite(0, true)
+	if err != nil {
+		return err
+	}
+	chunkDelta2 := int64(len(probe2)) - int64(len(f.rawMoov))
+	newMoov, err = f.patchMoovForRewrite(chunkDelta2, true)
+	if err != nil {
+		return err
+	}
+	return src.writeWithMoovReplaced(path, newMoov)
 }
 
 // rawTopLevel records the raw bytes of every top-level box so

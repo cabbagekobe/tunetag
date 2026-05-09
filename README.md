@@ -6,20 +6,21 @@ cgo, no bundled WASM, no external taglib.
 
 ## Status
 
-Under construction. Read paths are solid for all three formats.
-Write paths cover:
+Approaching feature-complete for v1. Read paths are solid for all
+three formats. Write paths cover:
 
-- **MP3**: ID3v1 / ID3v2.3 / ID3v2.4, with in-place writes when the
-  new tag fits in the existing slot and atomic temp-file rewrites
-  when it does not.
+- **MP3**: ID3v1, ID3v2.2, ID3v2.3, ID3v2.4. Writes use in-place
+  overwrites when the new tag fits in the existing slot and atomic
+  temp-file rewrites otherwise. The v2.4 footer flag is honoured
+  (mutually-exclusive with padding per spec).
 - **FLAC**: VORBIS_COMMENT and PICTURE round-trip with PADDING-block
   absorption, atomic rewrite fallback, and non-metadata blocks
   preserved byte-for-byte.
 - **MP4 / M4A**: in-place via sibling `free` absorption (Tier 1) and
-  full atomic rewrite with stco / co64 patching (Tier 2/3). Auto
-  promotion of overflowing stco values to co64 is not yet wired up;
-  such writes surface `mp4.ErrStcoOverflow`. Fragmented MP4
-  (mvex / moof) is detected and rejected.
+  full atomic rewrite with stco / co64 patching (Tier 2/3). When
+  patching would push a 32-bit chunk offset past 2^32-1, every stco
+  in the file is auto-promoted to co64. Fragmented MP4 (mvex / moof)
+  is detected and rejected.
 
 ## Install
 
@@ -34,12 +35,12 @@ Requires Go 1.23 or later.
 | Container | Read | Write | Notes |
 |-----------|:----:|:-----:|-------|
 | ID3v1 / v1.1                | ✅ | ✅ | trailer in / out, Winamp genres |
-| ID3v2.2                     | ✅ | ❌ | normalised to v2.3/2.4 IDs on read |
+| ID3v2.2                     | ✅ | ✅ | 4-char canonical IDs in memory; PIC body translated |
 | ID3v2.3                     | ✅ | ✅ | UTF-16 default to preserve CJK |
 | ID3v2.4                     | ✅ | ✅ | UTF-8 default |
 | ID3v2 unsynchronisation     | ✅ | ❌ | decoded on read; never re-emitted |
 | ID3v2 extended header       | ✅ | ❌ | read-skipped; not preserved |
-| ID3v2 footer (v2.4)         | ❌ | ❌ | rejected on write |
+| ID3v2 footer (v2.4)         | ✅ | ✅ | excludes padding when emitted |
 | FLAC VORBIS_COMMENT         | ✅ | ✅ | UTF-8, case-insensitive lookup |
 | FLAC PICTURE                | ✅ | ✅ | 21 ID3-compatible picture types |
 | FLAC unknown blocks         | ✅ | ✅ | preserved verbatim |
@@ -47,7 +48,7 @@ Requires Go 1.23 or later.
 | MP4 freeform `----` (read)  | ✅ | ✅ | mean / name / data preserved |
 | MP4 covr (JPEG / PNG)       | ✅ | ✅ | as above |
 | MP4 stco / co64 patch       | ✅ | ✅ | shifted by moov delta on rewrite |
-| stco → co64 auto promotion  | — | ❌ | returns `mp4.ErrStcoOverflow` |
+| stco → co64 auto promotion  | — | ✅ | triggered when entries overflow |
 | Fragmented MP4 (mvex/moof)  | — | ❌ | rejected on write |
 
 ## Usage
@@ -103,9 +104,8 @@ m.Tag.SetTitle("New Title")
 m.Tag.SetArtist("New Artist")
 m.Tag.SetTrack(3, 12)
 if err := m.WriteFile("song.m4a"); err != nil {
-    // mp4.ErrStcoOverflow surfaces when stco patching would push a
-    // chunk offset past 2^32-1 (auto promotion to co64 is not yet
-    // implemented).
+    // Fragmented MP4 returns mp4.ErrFragmentedUnsupport. Any other
+    // failure is an I/O or container error.
     log.Fatal(err)
 }
 ```

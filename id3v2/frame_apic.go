@@ -47,17 +47,27 @@ func parsePictureFrame(_ string, body []byte, _, _ byte) (Frame, error) {
 
 func (f *PictureFrame) Encode(v Version, w io.Writer) error {
 	enc := chooseEncoding(v, f.Encoding, f.Description)
-	var body bytes.Buffer
-	body.WriteByte(byte(enc))
 	mime := f.MIME
 	if mime == "" {
 		mime = "image/jpeg"
 	}
-	mimeBytes, err := encodeString(EncISO88591, mime, true)
-	if err != nil {
-		return err
+	var body bytes.Buffer
+	body.WriteByte(byte(enc))
+	if v == V22 {
+		// v2.2 PIC body uses a 3-character image format code in
+		// place of the v2.3+ null-terminated MIME type.
+		format, err := mimeToV22Format(mime)
+		if err != nil {
+			return err
+		}
+		body.WriteString(format)
+	} else {
+		mimeBytes, err := encodeString(EncISO88591, mime, true)
+		if err != nil {
+			return err
+		}
+		body.Write(mimeBytes)
 	}
-	body.Write(mimeBytes)
 	body.WriteByte(f.PictureType)
 	desc, err := encodeString(enc, f.Description, true)
 	if err != nil {
@@ -66,6 +76,26 @@ func (f *PictureFrame) Encode(v Version, w io.Writer) error {
 	body.Write(desc)
 	body.Write(f.Data)
 	return writeFrameHeaderAndBody(v, w, "APIC", 0, 0, body.Bytes())
+}
+
+// mimeToV22Format returns the 3-character image format code for the
+// given MIME type. Returns an error for MIME types without a known
+// v2.2 representation.
+func mimeToV22Format(mime string) (string, error) {
+	switch strings.ToLower(mime) {
+	case "image/jpeg", "image/jpg":
+		return "JPG", nil
+	case "image/png":
+		return "PNG", nil
+	case "image/gif":
+		return "GIF", nil
+	case "image/bmp":
+		return "BMP", nil
+	case "image/tiff":
+		return "TIF", nil
+	default:
+		return "", fmt.Errorf("id3v2: MIME %q has no v2.2 image format equivalent", mime)
+	}
 }
 
 // translateV22PIC rewrites a v2.2 PIC frame body into the v2.3 APIC
