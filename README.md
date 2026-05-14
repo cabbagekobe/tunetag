@@ -133,6 +133,22 @@ etc.).
 
 Build with `go install github.com/cabbagekobe/tunetag/cmd/tunetag@latest`.
 
+## Practical patterns
+
+- **Bulk library scan**: `tunetag.Open(path)` is ~50 µs per file
+  (cycling through real-world MP3 / M4A fixtures on Apple M4 Pro).
+  A 100 k-track library scans in roughly five seconds.
+- **In-place re-tag without growing the file**: ID3v2 writes
+  default to 1 KiB of padding, and FLAC writes absorb diffs into
+  an existing PADDING block when possible. Mutating Title /
+  Artist on an already-tagged file usually does not touch any
+  audio bytes.
+- **Preserving unknown metadata**: tunetag never silently drops
+  data. Unknown ID3v2 frames are kept as `GenericFrame`; unknown
+  FLAC blocks ride through as `RawBlock`; iTunes purchase info
+  and freeform `----` atoms in MP4 are preserved across writes
+  unless `Strip` is called.
+
 ## Concurrency
 
 A `*Tag`, `*flac.File`, or `*mp4.File` value is **not** safe for
