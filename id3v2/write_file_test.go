@@ -210,3 +210,13 @@ func TestWriteFile_FailedRewriteLeavesNoOrphan(t *testing.T) {
 		}
 	}
 }
+
+// --- merged from edge_test.go ----------------------------------
+
+func TestWriteFile_OnNonexistentPath(t *testing.T) {
+	tag := &Tag{Version: V24, Padding: 0}
+	tag.SetTitle("X")
+	if err := tag.WriteFile("/dev/null/does-not-exist/file.mp3"); err == nil {
+		t.Fatal("expected error for nonexistent parent directory")
+	}
+}

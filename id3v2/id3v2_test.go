@@ -380,3 +380,21 @@ func TestEncodedSize_IncludesPadding(t *testing.T) {
 		t.Errorf("encoded size = %d, want 122", buf.Len())
 	}
 }
+
+// --- merged from edge_test.go ----------------------------------
+
+func TestRead_EmptyTagPaddingOnly(t *testing.T) {
+	// 1 KiB of padding, no frames. Must produce zero frames.
+	h := Header{Version: V23, Size: 1024}
+	var raw bytes.Buffer
+	h.writeTo(&raw)
+	raw.Write(make([]byte, 1024))
+
+	tag, err := Read(&raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tag.Frames) != 0 {
+		t.Errorf("frames = %d, want 0", len(tag.Frames))
+	}
+}

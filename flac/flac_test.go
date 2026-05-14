@@ -36,10 +36,63 @@ func dummyStreamInfo() *RawBlock {
 	return &RawBlock{BlockType: BlockStreamInfo, Body: make([]byte, 34)}
 }
 
+func fileSize(t *testing.T, p string) int64 {
+	t.Helper()
+	info, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info.Size()
+}
+
+// --- Read defensive ---------------------------------------------
+
+func TestRead_EmptyStream(t *testing.T) {
+	if _, err := Read(bytes.NewReader(nil)); err == nil {
+		t.Fatal("expected error on empty stream")
+	}
+}
+
 func TestRead_NoMagic(t *testing.T) {
 	rs := bytes.NewReader([]byte("XYZW___not_flac"))
 	if _, err := Read(rs); !errors.Is(err, ErrNoFLAC) {
 		t.Fatalf("got %v, want ErrNoFLAC", err)
+	}
+}
+
+func TestRead_NotFLAC(t *testing.T) {
+	if _, err := Read(bytes.NewReader([]byte("OggS......"))); !errors.Is(err, ErrNoFLAC) {
+		t.Errorf("got %v, want ErrNoFLAC", err)
+	}
+}
+
+func TestRead_TruncatedAfterMagic(t *testing.T) {
+	if _, err := Read(bytes.NewReader([]byte("fLaC"))); err == nil {
+		t.Fatal("expected error: truncated after magic")
+	}
+}
+
+func TestRead_BlockBodyExceedsStream(t *testing.T) {
+	var buf bytes.Buffer
+	buf.Write(Magic[:])
+	if err := writeBlockHeader(&buf, BlockStreamInfo, true, 1024); err != nil {
+		t.Fatal(err)
+	}
+	buf.Write([]byte{0x00, 0x00, 0x00, 0x00})
+	if _, err := Read(bytes.NewReader(buf.Bytes())); err == nil {
+		t.Fatal("expected error: block body exceeds stream")
+	}
+}
+
+func TestRead_TruncatedWithoutLastFlag(t *testing.T) {
+	var buf bytes.Buffer
+	buf.Write(Magic[:])
+	if err := writeBlockHeader(&buf, BlockStreamInfo, false, 34); err != nil {
+		t.Fatal(err)
+	}
+	buf.Write(make([]byte, 34))
+	if _, err := Read(bytes.NewReader(buf.Bytes())); err == nil {
+		t.Fatal("expected error: stream ends without last-block flag")
 	}
 }
 
@@ -58,83 +111,9 @@ func TestRead_StreamInfoOnly(t *testing.T) {
 }
 
 func TestRead_RejectsMissingStreamInfo(t *testing.T) {
-	// Build a file whose first block is VORBIS_COMMENT (not allowed).
 	bad := buildFLAC(t, []Block{&VorbisComment{Vendor: "x"}}, nil)
 	if _, err := Read(bytes.NewReader(bad)); err == nil {
 		t.Fatal("expected error")
-	}
-}
-
-func TestVorbisComment_RoundTrip(t *testing.T) {
-	in := &VorbisComment{
-		Vendor:   "tunetag-test",
-		Comments: []string{"TITLE=Hello", "ARTIST=Alice", "ARTIST=Bob"},
-	}
-	body, err := in.Encode()
-	if err != nil {
-		t.Fatal(err)
-	}
-	out, err := parseVorbisComment(body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out.Vendor != in.Vendor {
-		t.Errorf("Vendor = %q", out.Vendor)
-	}
-	if len(out.Comments) != 3 {
-		t.Errorf("Comments len = %d", len(out.Comments))
-	}
-	for i := range in.Comments {
-		if in.Comments[i] != out.Comments[i] {
-			t.Errorf("Comments[%d] = %q, want %q", i, out.Comments[i], in.Comments[i])
-		}
-	}
-}
-
-func TestVorbisComment_GetSetRemove(t *testing.T) {
-	vc := &VorbisComment{Vendor: "x"}
-	vc.Set("title", "First Title")
-	if got := vc.First("TITLE"); got != "First Title" {
-		t.Errorf("case-insensitive lookup failed: %q", got)
-	}
-	vc.Set("Title", "Second Title")
-	if vals := vc.Get("title"); len(vals) != 1 || vals[0] != "Second Title" {
-		t.Errorf("Set should replace: %v", vals)
-	}
-	vc.Add("ARTIST", "A")
-	vc.Add("artist", "B")
-	if vals := vc.Get("Artist"); len(vals) != 2 {
-		t.Errorf("Add multi-value: %v", vals)
-	}
-	vc.Remove("ARTIST")
-	if vals := vc.Get("artist"); len(vals) != 0 {
-		t.Errorf("Remove failed: %v", vals)
-	}
-}
-
-func TestPicture_RoundTrip(t *testing.T) {
-	in := &Picture{
-		PictureType:   3,
-		MIME:          "image/jpeg",
-		Description:   "Front cover 表紙",
-		Width:         500,
-		Height:        500,
-		Depth:         24,
-		IndexedColors: 0,
-		Data:          []byte{0xFF, 0xD8, 'J', 'F', 'I', 'F'},
-	}
-	body, err := in.Encode()
-	if err != nil {
-		t.Fatal(err)
-	}
-	out, err := parsePicture(body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out.PictureType != 3 || out.MIME != "image/jpeg" || out.Description != "Front cover 表紙" ||
-		out.Width != 500 || out.Height != 500 || out.Depth != 24 ||
-		!bytes.Equal(out.Data, in.Data) {
-		t.Errorf("round-trip mismatch:\n got %+v\nwant %+v", out, in)
 	}
 }
 
@@ -159,6 +138,58 @@ func TestRead_FullFile_VorbisCommentAndPicture(t *testing.T) {
 	}
 }
 
+func TestRead_MultipleVorbisCommentBlocks(t *testing.T) {
+	// Spec says only one VORBIS_COMMENT block per stream, but we
+	// shouldn't panic when given two: the helper VorbisComment()
+	// returns the first.
+	si := &RawBlock{BlockType: BlockStreamInfo, Body: make([]byte, 34)}
+	v1 := &VorbisComment{Vendor: "first", Comments: []string{"TITLE=A"}}
+	v2 := &VorbisComment{Vendor: "second", Comments: []string{"TITLE=B"}}
+	var buf bytes.Buffer
+	buf.Write(Magic[:])
+	for i, b := range []Block{si, v1, v2} {
+		body, _ := b.Encode()
+		writeBlockHeader(&buf, b.Type(), i == 2, uint32(len(body)))
+		buf.Write(body)
+	}
+	f, err := Read(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	vc := f.VorbisComment()
+	if vc.Vendor != "first" {
+		t.Errorf("VorbisComment helper returned %q, want first", vc.Vendor)
+	}
+}
+
+func TestRead_FromFile_Roundtrip(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "x.flac")
+	si := &RawBlock{BlockType: BlockStreamInfo, Body: make([]byte, 34)}
+	vc := &VorbisComment{Vendor: "v", Comments: []string{"TITLE=hello"}}
+	pad := &PaddingBlock{Size: 1024}
+	f := &File{Blocks: []Block{si, vc, pad}}
+	body, err := f.encodeMetadata()
+	if err != nil {
+		t.Fatal(err)
+	}
+	full := append(Magic[:], body...)
+	full = append(full, []byte("audio")...)
+	if err := os.WriteFile(p, full, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.VorbisComment().First("TITLE") != "hello" {
+		t.Errorf("TITLE = %q", got.VorbisComment().First("TITLE"))
+	}
+}
+
+// --- File helpers ----------------------------------------------
+
 func TestVorbisComment_Helper_CreatesOnDemand(t *testing.T) {
 	raw := buildFLAC(t, []Block{dummyStreamInfo()}, nil)
 	f, err := Read(bytes.NewReader(raw))
@@ -177,6 +208,63 @@ func TestVorbisComment_Helper_CreatesOnDemand(t *testing.T) {
 		t.Errorf("helper did not insert the same block")
 	}
 }
+
+func TestFile_VorbisCommentCreatesIfAbsent(t *testing.T) {
+	f := &File{Blocks: []Block{
+		&RawBlock{BlockType: BlockStreamInfo, Body: make([]byte, 34)},
+	}}
+	vc := f.VorbisComment()
+	if vc == nil {
+		t.Fatal("returned nil")
+	}
+	if len(f.Blocks) != 2 {
+		t.Errorf("Blocks = %d, want 2 (STREAMINFO + new VC)", len(f.Blocks))
+	}
+	if _, ok := f.Blocks[1].(*VorbisComment); !ok {
+		t.Errorf("Blocks[1] = %T, want *VorbisComment", f.Blocks[1])
+	}
+}
+
+func TestFile_VorbisCommentMutationsPersist(t *testing.T) {
+	f := &File{Blocks: []Block{
+		&RawBlock{BlockType: BlockStreamInfo, Body: make([]byte, 34)},
+	}}
+	f.VorbisComment().Set("TITLE", "first")
+	if v := f.VorbisComment().First("TITLE"); v != "first" {
+		t.Errorf("First TITLE = %q", v)
+	}
+	f.VorbisComment().Set("TITLE", "second")
+	if v := f.VorbisComment().First("TITLE"); v != "second" {
+		t.Errorf("First TITLE = %q", v)
+	}
+}
+
+func TestFile_RemovePicturesNoPicture(t *testing.T) {
+	f := &File{Blocks: []Block{
+		&RawBlock{BlockType: BlockStreamInfo, Body: make([]byte, 34)},
+	}}
+	f.RemovePictures()
+	if len(f.Blocks) != 1 {
+		t.Errorf("Blocks = %d, want 1", len(f.Blocks))
+	}
+}
+
+func TestFile_AddPicturesMultiple(t *testing.T) {
+	f := &File{Blocks: []Block{
+		&RawBlock{BlockType: BlockStreamInfo, Body: make([]byte, 34)},
+	}}
+	f.AddPicture(&Picture{PictureType: 3, MIME: "image/png"})
+	f.AddPicture(&Picture{PictureType: 4, MIME: "image/jpeg"})
+	if len(f.Pictures()) != 2 {
+		t.Errorf("Pictures = %d, want 2", len(f.Pictures()))
+	}
+	f.RemovePictures()
+	if len(f.Pictures()) != 0 {
+		t.Errorf("after RemovePictures: %d, want 0", len(f.Pictures()))
+	}
+}
+
+// --- WriteFile -------------------------------------------------
 
 func TestWriteFile_InPlace_Exact(t *testing.T) {
 	dir := t.TempDir()
@@ -203,7 +291,6 @@ func TestWriteFile_InPlace_Exact(t *testing.T) {
 func TestWriteFile_InPlace_AddsPadding(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "x.flac")
-	// Initial: STREAMINFO + PADDING(2 KiB) + audio.
 	raw := buildFLAC(t, []Block{dummyStreamInfo(), &PaddingBlock{Size: 2048}}, []byte("AUDIO"))
 	if err := os.WriteFile(p, raw, 0o644); err != nil {
 		t.Fatal(err)
@@ -240,7 +327,6 @@ func TestWriteFile_InPlace_AddsPadding(t *testing.T) {
 func TestWriteFile_FullRewrite(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "x.flac")
-	// Initial: STREAMINFO + small VC, no padding.
 	vc := &VorbisComment{Vendor: "v", Comments: []string{"T=x"}}
 	raw := buildFLAC(t, []Block{dummyStreamInfo(), vc}, []byte("AUDIO_BODY_HERE"))
 	if err := os.WriteFile(p, raw, 0o644); err != nil {
@@ -327,11 +413,77 @@ func TestWriteFile_PreservesUnknownBlocks(t *testing.T) {
 	}
 }
 
-func fileSize(t *testing.T, p string) int64 {
-	t.Helper()
-	info, err := os.Stat(p)
+func TestWriteFile_AbsorbingPaddingShrinksSafely(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "x.flac")
+	si := &RawBlock{BlockType: BlockStreamInfo, Body: make([]byte, 34)}
+	vc := &VorbisComment{Vendor: "v", Comments: []string{"TITLE=" + string(bytes.Repeat([]byte{'a'}, 200))}}
+	pad := &PaddingBlock{Size: 1024}
+	f := &File{Blocks: []Block{si, vc, pad}}
+	body, err := f.encodeMetadata()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return info.Size()
+	full := append(Magic[:], body...)
+	full = append(full, []byte("audio")...)
+	if err := os.WriteFile(p, full, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	origSize := int64(len(full))
+
+	f2, err := ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f2.VorbisComment().Set("TITLE", "x")
+	if err := f2.WriteFile(p); err != nil {
+		t.Fatal(err)
+	}
+	info, _ := os.Stat(p)
+	if info.Size() != origSize {
+		t.Errorf("size = %d, want %d (padding should absorb)", info.Size(), origSize)
+	}
+	got, _ := os.ReadFile(p)
+	if !bytes.HasSuffix(got, []byte("audio")) {
+		t.Errorf("audio bytes corrupted")
+	}
+}
+
+func TestWriteFile_RejectsZeroBlocks(t *testing.T) {
+	f := &File{}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "x.flac")
+	body := []byte("fLaC")
+	body = append(body, []byte{0x80, 0, 0, 0}...)
+	if err := os.WriteFile(p, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.WriteFile(p); err == nil {
+		t.Fatal("expected error: zero blocks")
+	}
+}
+
+func TestWriteFile_RejectsNonStreamInfoFirstBlock(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "x.flac")
+	body := []byte("fLaC")
+	body = append(body, []byte{0x80, 0, 0, 0}...)
+	if err := os.WriteFile(p, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := &File{Blocks: []Block{
+		&VorbisComment{Vendor: "x"},
+	}}
+	if err := f.WriteFile(p); err == nil {
+		t.Fatal("expected error: first block must be STREAMINFO")
+	}
+}
+
+func TestWriteFile_NonexistentPath(t *testing.T) {
+	f := &File{Blocks: []Block{
+		&RawBlock{BlockType: BlockStreamInfo, Body: make([]byte, 34)},
+	}}
+	if err := f.WriteFile("/dev/null/missing/x.flac"); err == nil {
+		t.Fatal("expected error for nonexistent parent")
+	}
 }
