@@ -3,6 +3,7 @@
 // Usage:
 //
 //	tunetag print  <file>
+//	tunetag dump   <file>
 //	tunetag set    <file> [--title=...] [--artist=...] [--album=...] [--year=YYYY] [--genre=...] [--track=N[/M]] [--disc=N[/M]]
 //	tunetag strip  <file>
 //	tunetag cover  <file> (--extract <out>) | (--set <in>)
@@ -32,6 +33,8 @@ func main() {
 	switch cmd {
 	case "print":
 		err = cmdPrint(args)
+	case "dump":
+		err = cmdDump(args)
 	case "set":
 		err = cmdSet(args)
 	case "strip":
@@ -53,6 +56,7 @@ func main() {
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage:")
 	fmt.Fprintln(os.Stderr, "  tunetag print  <file>")
+	fmt.Fprintln(os.Stderr, "  tunetag dump   <file>")
 	fmt.Fprintln(os.Stderr, "  tunetag set    <file> [--title=...] [--artist=...] [--album=...] [--year=YYYY] [--genre=...] [--track=N[/M]] [--disc=N[/M]]")
 	fmt.Fprintln(os.Stderr, "  tunetag strip  <file>")
 	fmt.Fprintln(os.Stderr, "  tunetag cover  <file> (--extract <out>) | (--set <in>)")
