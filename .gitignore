@@ -11,3 +11,6 @@ coverage.txt
 .DS_Store
 *.swp
 *~
+
+# Local test fixtures copied from a personal music library
+/testsound/
