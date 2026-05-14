@@ -6,14 +6,14 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cabbagekobe/tunetag/internal/testutil"
+	"github.com/cabbagekobe/tunetag/internal/mp4test"
 )
 
 // FuzzReadMP4 feeds arbitrary bytes through the MP4 reader. The
 // reader must not panic; any successfully-parsed file is also
 // re-encoded to ensure ilst encoding is panic-free.
 func FuzzReadMP4(f *testing.F) {
-	f.Add(testutil.BuildMinimal(testutil.MinimalOptions{Title: "seed"}))
+	f.Add(mp4test.BuildMinimal(mp4test.MinimalOptions{Title: "seed"}))
 	f.Add([]byte("not an mp4"))
 	f.Add([]byte{})
 

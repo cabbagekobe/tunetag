@@ -5,14 +5,14 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cabbagekobe/tunetag/internal/testutil"
+	"github.com/cabbagekobe/tunetag/internal/mp4test"
 )
 
-func benchTempMP4(b *testing.B, opt testutil.MinimalOptions) string {
+func benchTempMP4(b *testing.B, opt mp4test.MinimalOptions) string {
 	b.Helper()
 	dir := b.TempDir()
 	p := filepath.Join(dir, "bench.m4a")
-	body := testutil.BuildMinimal(opt)
+	body := mp4test.BuildMinimal(opt)
 	if err := os.WriteFile(p, body, 0o644); err != nil {
 		b.Fatal(err)
 	}
@@ -20,7 +20,7 @@ func benchTempMP4(b *testing.B, opt testutil.MinimalOptions) string {
 }
 
 func BenchmarkRead_MinimalMP4(b *testing.B) {
-	p := benchTempMP4(b, testutil.MinimalOptions{Title: "T", Artist: "A", Album: "Al"})
+	p := benchTempMP4(b, mp4test.MinimalOptions{Title: "T", Artist: "A", Album: "Al"})
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -31,7 +31,7 @@ func BenchmarkRead_MinimalMP4(b *testing.B) {
 }
 
 func BenchmarkWriteInPlace_IdenticalSize(b *testing.B) {
-	p := benchTempMP4(b, testutil.MinimalOptions{Title: "ABCD"})
+	p := benchTempMP4(b, mp4test.MinimalOptions{Title: "ABCD"})
 	f, err := Read(p)
 	if err != nil {
 		b.Fatal(err)
@@ -53,7 +53,7 @@ func BenchmarkWriteInPlace_IdenticalSize(b *testing.B) {
 }
 
 func BenchmarkWriteWithFreeAbsorb(b *testing.B) {
-	p := benchTempMP4(b, testutil.MinimalOptions{Title: "T", FreeBytes: 128})
+	p := benchTempMP4(b, mp4test.MinimalOptions{Title: "T", FreeBytes: 128})
 	f, err := Read(p)
 	if err != nil {
 		b.Fatal(err)
@@ -74,7 +74,7 @@ func BenchmarkWriteWithFreeAbsorb(b *testing.B) {
 }
 
 func BenchmarkScanTopLevel(b *testing.B) {
-	body := testutil.BuildMinimal(testutil.MinimalOptions{
+	body := mp4test.BuildMinimal(mp4test.MinimalOptions{
 		Title: "T", Artist: "A", Album: "Al",
 	})
 	rd := byteReaderAt(body)
@@ -90,7 +90,7 @@ func BenchmarkScanTopLevel(b *testing.B) {
 }
 
 func BenchmarkEncodedMoovBytes(b *testing.B) {
-	p := benchTempMP4(b, testutil.MinimalOptions{Title: "T", Artist: "A"})
+	p := benchTempMP4(b, mp4test.MinimalOptions{Title: "T", Artist: "A"})
 	f, err := Read(p)
 	if err != nil {
 		b.Fatal(err)

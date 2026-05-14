@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cabbagekobe/tunetag/internal/testutil"
+	"github.com/cabbagekobe/tunetag/internal/mp4test"
 )
 
 // readSTCOOffsets walks the file at p and returns the chunk offsets
@@ -74,7 +74,7 @@ func findFirstSTCO(body []byte) ([]uint32, bool) {
 
 func TestPatchSTCO_OffsetsShiftedByDelta(t *testing.T) {
 	originalOffsets := []uint32{1024, 2048, 4096}
-	raw := testutil.BuildMinimal(testutil.MinimalOptions{
+	raw := mp4test.BuildMinimal(mp4test.MinimalOptions{
 		Title:    "tiny",
 		WithStco: originalOffsets,
 	})
@@ -122,7 +122,7 @@ func TestPatchSTCO_OffsetsShiftedByDelta(t *testing.T) {
 
 func TestPatchSTCO_MdatBeforeMoov_NoPatchNeeded(t *testing.T) {
 	originalOffsets := []uint32{500, 1000, 2000}
-	raw := testutil.BuildMinimal(testutil.MinimalOptions{
+	raw := mp4test.BuildMinimal(mp4test.MinimalOptions{
 		Title:      "tiny",
 		WithStco:   originalOffsets,
 		MdatBefore: true,
@@ -154,7 +154,7 @@ func TestPatchSTCO_MdatBeforeMoov_NoPatchNeeded(t *testing.T) {
 func TestPatchSTCO_OverflowAutoPromotesToCo64(t *testing.T) {
 	// 0xFFFFFFFF is the maximum legal stco entry; any positive delta
 	// forces a co64 promotion.
-	raw := testutil.BuildMinimal(testutil.MinimalOptions{
+	raw := mp4test.BuildMinimal(mp4test.MinimalOptions{
 		Title:    "tiny",
 		WithStco: []uint32{0xFFFFFFFF, 0xFFFFFFFE},
 	})

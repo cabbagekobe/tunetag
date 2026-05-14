@@ -1,7 +1,7 @@
-// Package testutil provides minimal MP4 byte-blob fixtures for the
+// Package mp4test provides minimal MP4 byte-blob fixtures for the
 // mp4 package tests. The generated files are not playable; their
 // only purpose is to exercise tunetag's box reader and writer.
-package testutil
+package mp4test
 
 import (
 	"bytes"

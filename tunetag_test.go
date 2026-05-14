@@ -11,7 +11,7 @@ import (
 	"github.com/cabbagekobe/tunetag/flac"
 	"github.com/cabbagekobe/tunetag/id3v1"
 	"github.com/cabbagekobe/tunetag/id3v2"
-	"github.com/cabbagekobe/tunetag/internal/testutil"
+	"github.com/cabbagekobe/tunetag/internal/mp4test"
 )
 
 // --- helpers ---------------------------------------------------
@@ -97,7 +97,7 @@ func TestDetect_FLACFromMagic(t *testing.T) {
 }
 
 func TestDetect_MP4FromTestutil(t *testing.T) {
-	body := testutil.BuildMinimal(testutil.MinimalOptions{Title: "x"})
+	body := mp4test.BuildMinimal(mp4test.MinimalOptions{Title: "x"})
 	got, err := Detect(bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -249,7 +249,7 @@ func TestOpen_FLAC(t *testing.T) {
 }
 
 func TestOpen_MP4(t *testing.T) {
-	raw := testutil.BuildMinimal(testutil.MinimalOptions{
+	raw := mp4test.BuildMinimal(mp4test.MinimalOptions{
 		Title: "Cosmic", Artist: "Carl", Album: "Stars",
 	})
 	p := writeFile(t, "x.m4a", raw)
@@ -457,7 +457,7 @@ func TestStrip_FLAC(t *testing.T) {
 }
 
 func TestStrip_MP4(t *testing.T) {
-	raw := testutil.BuildMinimal(testutil.MinimalOptions{
+	raw := mp4test.BuildMinimal(mp4test.MinimalOptions{
 		Title: "removeme", FreeBytes: 256,
 	})
 	p := writeFile(t, "x.m4a", raw)

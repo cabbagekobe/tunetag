@@ -5,7 +5,7 @@ import (
 	"encoding/binary"
 	"testing"
 
-	"github.com/cabbagekobe/tunetag/internal/testutil"
+	"github.com/cabbagekobe/tunetag/internal/mp4test"
 )
 
 func TestFourCC_StringAndEqual(t *testing.T) {
@@ -87,7 +87,7 @@ func TestReadBoxHeader_ShortReadOf8Bytes(t *testing.T) {
 }
 
 func TestScanTopLevel_OnMinimalFile(t *testing.T) {
-	body := testutil.BuildMinimal(testutil.MinimalOptions{Title: "x"})
+	body := mp4test.BuildMinimal(mp4test.MinimalOptions{Title: "x"})
 	tops, err := scanTopLevel(byteReaderAt(body), int64(len(body)))
 	if err != nil {
 		t.Fatal(err)

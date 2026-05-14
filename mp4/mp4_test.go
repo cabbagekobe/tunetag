@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cabbagekobe/tunetag/internal/testutil"
+	"github.com/cabbagekobe/tunetag/internal/mp4test"
 )
 
 // --- Shared test helpers ---------------------------------------
@@ -79,7 +79,7 @@ func boxFromBody(typ string, body []byte) []byte {
 // --- File-level Read / WriteFile tests --------------------------
 
 func TestRead_Minimal(t *testing.T) {
-	raw := testutil.BuildMinimal(testutil.MinimalOptions{
+	raw := mp4test.BuildMinimal(mp4test.MinimalOptions{
 		Title: "Hello", Artist: "Alice", Album: "First",
 	})
 	p := writeTempMP4(t, raw)
@@ -153,7 +153,7 @@ func TestRead_BoxSizeBeyondFile(t *testing.T) {
 }
 
 func TestRead_MissingIlstTreatedAsEmpty(t *testing.T) {
-	body := testutil.BuildMinimal(testutil.MinimalOptions{}) // no fields => ilst empty
+	body := mp4test.BuildMinimal(mp4test.MinimalOptions{}) // no fields => ilst empty
 	p := writeTempMP4(t, body)
 	f, err := Read(p)
 	if err != nil {
@@ -168,7 +168,7 @@ func TestRead_MissingIlstTreatedAsEmpty(t *testing.T) {
 }
 
 func TestRead_RoundTripViaWriteFile(t *testing.T) {
-	body := testutil.BuildMinimal(testutil.MinimalOptions{
+	body := mp4test.BuildMinimal(mp4test.MinimalOptions{
 		Title:     "hello",
 		FreeBytes: 64,
 	})
@@ -194,7 +194,7 @@ func TestRead_RoundTripViaWriteFile(t *testing.T) {
 }
 
 func TestWriteFile_InPlaceExact(t *testing.T) {
-	raw := testutil.BuildMinimal(testutil.MinimalOptions{Title: "Same"})
+	raw := mp4test.BuildMinimal(mp4test.MinimalOptions{Title: "Same"})
 	p := writeTempMP4(t, raw)
 
 	f, err := Read(p)
@@ -211,7 +211,7 @@ func TestWriteFile_InPlaceExact(t *testing.T) {
 }
 
 func TestWriteFile_IdenticalSizeIsInPlace(t *testing.T) {
-	body := testutil.BuildMinimal(testutil.MinimalOptions{Title: "ABCD"})
+	body := mp4test.BuildMinimal(mp4test.MinimalOptions{Title: "ABCD"})
 	p := writeTempMP4(t, body)
 	origSize := int64(len(body))
 
@@ -234,7 +234,7 @@ func TestWriteFile_IdenticalSizeIsInPlace(t *testing.T) {
 }
 
 func TestWriteFile_AbsorbsIntoSiblingFree(t *testing.T) {
-	raw := testutil.BuildMinimal(testutil.MinimalOptions{
+	raw := mp4test.BuildMinimal(mp4test.MinimalOptions{
 		Title:     "A",
 		FreeBytes: 256,
 	})
@@ -267,7 +267,7 @@ func TestWriteFile_AbsorbsIntoSiblingFree(t *testing.T) {
 }
 
 func TestWriteFile_ShrinksByInsertingFree(t *testing.T) {
-	raw := testutil.BuildMinimal(testutil.MinimalOptions{
+	raw := mp4test.BuildMinimal(mp4test.MinimalOptions{
 		Title:  "a much longer title to be replaced by a short one",
 		Artist: "and another field",
 	})
@@ -305,7 +305,7 @@ func TestWriteFile_ShrinksByInsertingFree(t *testing.T) {
 }
 
 func TestWriteFile_FullRewriteWhenGrowing(t *testing.T) {
-	raw := testutil.BuildMinimal(testutil.MinimalOptions{Title: "tiny"})
+	raw := mp4test.BuildMinimal(mp4test.MinimalOptions{Title: "tiny"})
 	p := writeTempMP4(t, raw)
 	original := int64(len(raw))
 
@@ -335,7 +335,7 @@ func TestWriteFile_FullRewriteWhenGrowing(t *testing.T) {
 // --- Picture / Track round-trip --------------------------------
 
 func TestPicture_AddCover_DetectsJPEG(t *testing.T) {
-	raw := testutil.BuildMinimal(testutil.MinimalOptions{Title: "x", FreeBytes: 4096})
+	raw := mp4test.BuildMinimal(mp4test.MinimalOptions{Title: "x", FreeBytes: 4096})
 	p := writeTempMP4(t, raw)
 	f, err := Read(p)
 	if err != nil {
@@ -363,7 +363,7 @@ func TestPicture_AddCover_DetectsJPEG(t *testing.T) {
 }
 
 func TestTrack_RoundTrip(t *testing.T) {
-	raw := testutil.BuildMinimal(testutil.MinimalOptions{Title: "x", FreeBytes: 256})
+	raw := mp4test.BuildMinimal(mp4test.MinimalOptions{Title: "x", FreeBytes: 256})
 	p := writeTempMP4(t, raw)
 	f, err := Read(p)
 	if err != nil {
@@ -389,7 +389,7 @@ func TestTrack_RoundTrip(t *testing.T) {
 // --- Multi-trak rewrite + fragmented MP4 -----------------------
 
 func TestWriteFile_FragmentedRejected(t *testing.T) {
-	base := testutil.BuildMinimal(testutil.MinimalOptions{Title: "x"})
+	base := mp4test.BuildMinimal(mp4test.MinimalOptions{Title: "x"})
 	raw := injectInMoov(t, base, mvexBox())
 	p := writeTempMP4(t, raw)
 	f, err := Read(p)
@@ -444,7 +444,7 @@ func TestPatchSTCO_MultipleTraks(t *testing.T) {
 
 func buildMP4WithTwoTraks(t *testing.T, stco1, stco2 []uint32) []byte {
 	t.Helper()
-	base := testutil.BuildMinimal(testutil.MinimalOptions{
+	base := mp4test.BuildMinimal(mp4test.MinimalOptions{
 		Title:    "tiny",
 		WithStco: stco1,
 	})
