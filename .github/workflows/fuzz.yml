@@ -1,0 +1,32 @@
+name: fuzz
+
+on:
+  schedule:
+    # 18:00 UTC = 03:00 JST. Runs every night.
+    - cron: '0 18 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  fuzz:
+    name: fuzz ${{ matrix.pkg }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - pkg: ./id3v2/
+            target: FuzzReadID3v2
+          - pkg: ./flac/
+            target: FuzzReadFLAC
+          - pkg: ./mp4/
+            target: FuzzReadMP4
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: fuzz ${{ matrix.target }}
+        run: go test -run=^$ -fuzz=${{ matrix.target }} -fuzztime=30s ${{ matrix.pkg }}
