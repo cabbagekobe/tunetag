@@ -106,14 +106,17 @@ func makeBEIntData(v int64) *DataAtom {
 }
 
 // TrackNumber returns (track, total) parsed from a trkn / disk
-// payload: 4-byte reserved + 2-byte number + 2-byte total + 2-byte
-// reserved (8 bytes minimum).
+// payload: 2-byte reserved + 2-byte number + 2-byte total + optional
+// 2-byte trailing reserved.
+//
+// iTunes emits trkn as 8 bytes and disk as 6 bytes (no trailing
+// reserved), so anything from 6 bytes upward is accepted here.
 func (d *DataAtom) TrackNumber() (track, total uint16, err error) {
 	if d.TypeCode != DataTypeBinary {
 		return 0, 0, errors.New("mp4: trkn/disk payload is not binary")
 	}
-	if len(d.Payload) < 8 {
-		return 0, 0, fmt.Errorf("mp4: trkn/disk payload %d bytes < 8", len(d.Payload))
+	if len(d.Payload) < 6 {
+		return 0, 0, fmt.Errorf("mp4: trkn/disk payload %d bytes < 6", len(d.Payload))
 	}
 	return binary.BigEndian.Uint16(d.Payload[2:4]),
 		binary.BigEndian.Uint16(d.Payload[4:6]),

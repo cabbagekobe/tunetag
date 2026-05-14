@@ -178,7 +178,7 @@ func TestDataAtom_TrackNumber_OnNonBinary(t *testing.T) {
 func TestDataAtom_TrackNumber_TooShort(t *testing.T) {
 	d := &DataAtom{TypeCode: DataTypeBinary, Payload: []byte{0, 0, 0, 1}}
 	if _, _, err := d.TrackNumber(); err == nil {
-		t.Fatal("expected error: payload < 8 bytes")
+		t.Fatal("expected error: payload < 6 bytes")
 	}
 }
 

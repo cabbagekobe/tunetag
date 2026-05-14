@@ -113,6 +113,39 @@ func TestMakeTrackNumberData_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestDataAtom_TrackNumber_iTunesDisk verifies that the 6-byte
+// `disk` payload format iTunes emits (no trailing reserved bytes)
+// parses correctly. The library used to require 8 bytes which made
+// Disc() silently return 0/0 on every iTunes-produced m4a.
+func TestDataAtom_TrackNumber_iTunesDisk(t *testing.T) {
+	// "00 00 00 01 00 03" => disc 1 of 3, the exact byte sequence
+	// observed in real fixtures.
+	d := &DataAtom{TypeCode: DataTypeBinary, Payload: []byte{0, 0, 0, 1, 0, 3}}
+	n, total, err := d.TrackNumber()
+	if err != nil {
+		t.Fatalf("6-byte disk payload should parse: %v", err)
+	}
+	if n != 1 || total != 3 {
+		t.Errorf("got (%d, %d), want (1, 3)", n, total)
+	}
+}
+
+// TestIlst_Disc_FromiTunesPayload exercises the same path via the
+// public Ilst.Disc() accessor.
+func TestIlst_Disc_FromiTunesPayload(t *testing.T) {
+	l := &Ilst{Items: []*Item{{
+		Key: KeyDisc,
+		Data: []*DataAtom{{
+			TypeCode: DataTypeBinary,
+			Payload:  []byte{0, 0, 0, 2, 0, 5}, // disc 2 of 5
+		}},
+	}}}
+	n, total := l.Disc()
+	if n != 2 || total != 5 {
+		t.Errorf("Disc() = (%d,%d), want (2,5)", n, total)
+	}
+}
+
 // --- parseDataAtom -------------------------------------------
 
 func TestParseDataAtom_LocalePreserved(t *testing.T) {
