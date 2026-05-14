@@ -1,5 +1,8 @@
 # tunetag
 
+[![test](https://github.com/cabbagekobe/tunetag/actions/workflows/test.yml/badge.svg)](https://github.com/cabbagekobe/tunetag/actions/workflows/test.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/cabbagekobe/tunetag.svg)](https://pkg.go.dev/github.com/cabbagekobe/tunetag)
+
 Pure Go audio metadata library. Reads and writes tags for **MP3**,
 **FLAC**, and **MP4 / M4A** using only the Go standard library — no
 cgo, no bundled WASM, no external taglib.
@@ -116,11 +119,17 @@ A thin command-line driver lives in `cmd/tunetag`.
 
 ```
 tunetag print  song.mp3
+tunetag dump   song.mp3
 tunetag set    song.mp3 --title="Hello" --artist="Alice" --year=2026 --track=3/12
 tunetag strip  song.mp3
 tunetag cover  song.mp3 --extract /tmp/cover.jpg
 tunetag cover  song.mp3 --set    /tmp/cover.jpg
 ```
+
+`print` shows the common metadata fields; `dump` lists every parsed
+frame / ilst item / FLAC block including unknown or non-standard ones
+(useful for inspecting iTunes private data, Traktor PRIV payloads,
+etc.).
 
 Build with `go install github.com/cabbagekobe/tunetag/cmd/tunetag@latest`.
 
