@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-05-15
+
+### Fixed
+
+- LICENSE text now matches the canonical SPDX MIT template so that
+  pkg.go.dev recognises the license as redistributable. The previous
+  `v0.1.0` LICENSE used the "OPERATION OF" variant which scored 0%
+  on Google's licensecheck library. Licensing intent (MIT) is
+  unchanged.
+
 ## [0.1.0] - 2026-05-15
 
 Initial public release.
@@ -59,5 +69,6 @@ Initial public release.
 - **Tests**: extensive unit coverage including round-trip,
   defensive parsing, fuzz seeds, and per-package benchmarks.
 
-[Unreleased]: https://github.com/cabbagekobe/tunetag/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/cabbagekobe/tunetag/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/cabbagekobe/tunetag/releases/tag/v0.1.1
 [0.1.0]: https://github.com/cabbagekobe/tunetag/releases/tag/v0.1.0
