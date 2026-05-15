@@ -58,11 +58,11 @@ func (t *Tag) WriteFile(path string) error {
 	if _, err := src.Seek(int64(existing), io.SeekStart); err != nil {
 		return err
 	}
-	if err := rewriteWithBody(path, src, t); err != nil {
-		return err
-	}
+	// rewriteWithBody closes src once the audio body has been copied
+	// to the temp file, so the rename can succeed on Windows where
+	// renaming over an open file is not permitted.
 	closed = true
-	return src.Close()
+	return rewriteWithBody(path, src, t)
 }
 
 func scanExistingTagSize(f *os.File) (uint32, error) {
@@ -110,10 +110,15 @@ func overwriteInPlace(path string, t *Tag, pad int, expected uint32) error {
 	return err
 }
 
-func rewriteWithBody(path string, body io.Reader, t *Tag) error {
+// rewriteWithBody builds a new file (tag bytes + audio body from
+// src) at a sibling temp path and renames it over path. src is
+// closed before the rename so Windows — which refuses to rename over
+// an open file — succeeds.
+func rewriteWithBody(path string, src *os.File, t *Tag) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".tunetag-*.tmp")
 	if err != nil {
+		src.Close()
 		return err
 	}
 	tmpPath := tmp.Name()
@@ -124,9 +129,17 @@ func rewriteWithBody(path string, body io.Reader, t *Tag) error {
 
 	if err := t.Encode(tmp); err != nil {
 		cleanup()
+		src.Close()
 		return err
 	}
-	if _, err := io.Copy(tmp, body); err != nil {
+	if _, err := io.Copy(tmp, src); err != nil {
+		cleanup()
+		src.Close()
+		return err
+	}
+	// Close the source BEFORE the rename. Windows refuses to rename
+	// over a file that is still open in any handle.
+	if err := src.Close(); err != nil {
 		cleanup()
 		return err
 	}

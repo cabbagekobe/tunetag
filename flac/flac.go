@@ -224,11 +224,11 @@ func (f *File) WriteFile(path string) error {
 	if err != nil {
 		return err
 	}
-	if err := f.rewriteAtomic(path, encoded, src); err != nil {
-		return err
-	}
+	// rewriteAtomic closes src once the audio body has been copied
+	// to the temp file, so the rename can succeed on Windows where
+	// renaming over an open file is not permitted.
 	closed = true
-	return src.Close()
+	return f.rewriteAtomic(path, encoded, src)
 }
 
 func (f *File) writeMetadataInPlace(path string, blocks []Block) error {
@@ -275,10 +275,15 @@ func encodedBlocksSize(blocks []Block) (int, error) {
 	return total, nil
 }
 
-func (f *File) rewriteAtomic(path string, encoded []byte, body io.Reader) error {
+// rewriteAtomic builds a new file (Magic + encoded + audio bytes
+// from src) at a sibling temp path and renames it over path. src is
+// closed before the rename so Windows — which refuses to rename over
+// an open file — succeeds.
+func (f *File) rewriteAtomic(path string, encoded []byte, src *os.File) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".tunetag-flac-*.tmp")
 	if err != nil {
+		src.Close()
 		return err
 	}
 	tmpPath := tmp.Name()
@@ -288,13 +293,22 @@ func (f *File) rewriteAtomic(path string, encoded []byte, body io.Reader) error 
 	}
 	if _, err := tmp.Write(Magic[:]); err != nil {
 		cleanup()
+		src.Close()
 		return err
 	}
 	if _, err := tmp.Write(encoded); err != nil {
 		cleanup()
+		src.Close()
 		return err
 	}
-	if _, err := io.Copy(tmp, body); err != nil {
+	if _, err := io.Copy(tmp, src); err != nil {
+		cleanup()
+		src.Close()
+		return err
+	}
+	// Close the source BEFORE the rename. Windows refuses to rename
+	// over a file that is still open in any handle.
+	if err := src.Close(); err != nil {
 		cleanup()
 		return err
 	}
