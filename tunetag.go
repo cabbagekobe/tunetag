@@ -14,9 +14,30 @@ import (
 // Detect inspects the start (and, when needed, the end) of rs to
 // identify the container format. The seek position of rs is restored
 // before returning when possible.
+//
+// On failure the returned error is one of:
+//   - ErrEmptyFile when rs is zero bytes long,
+//   - ErrFileTooSmall when rs is shorter than any supported tag
+//     header can be,
+//   - ErrUnknownFormat otherwise.
+//
+// ErrEmptyFile and ErrFileTooSmall are refinements of
+// ErrUnknownFormat — errors.Is reports true for both, so callers that
+// only branch on ErrUnknownFormat keep working unchanged.
 func Detect(rs io.ReadSeeker) (Format, error) {
 	cur, _ := rs.Seek(0, io.SeekCurrent)
 	defer rs.Seek(cur, io.SeekStart)
+
+	// Resolve the total readable size up front so empty and extremely
+	// short inputs can be reported with a clearer sentinel than the
+	// generic "unknown format".
+	end, err := rs.Seek(0, io.SeekEnd)
+	if err != nil {
+		return FormatUnknown, err
+	}
+	if end == 0 {
+		return FormatUnknown, ErrEmptyFile
+	}
 
 	if _, err := rs.Seek(0, io.SeekStart); err != nil {
 		return FormatUnknown, err
@@ -38,10 +59,6 @@ func Detect(rs io.ReadSeeker) (Format, error) {
 		return FormatMP4, nil
 	}
 	// Fall back to ID3v1 trailer detection.
-	end, err := rs.Seek(0, io.SeekEnd)
-	if err != nil {
-		return FormatUnknown, err
-	}
 	if end >= id3v1.TagSize {
 		if _, err := rs.Seek(end-id3v1.TagSize, io.SeekStart); err != nil {
 			return FormatUnknown, err
@@ -50,6 +67,11 @@ func Detect(rs io.ReadSeeker) (Format, error) {
 		if _, err := io.ReadFull(rs, marker[:]); err == nil && marker[0] == 'T' && marker[1] == 'A' && marker[2] == 'G' {
 			return FormatID3v1, nil
 		}
+	}
+	// Nothing matched. If the file is shorter than even our sniff
+	// buffer, no supported tag header could fit — say so explicitly.
+	if end < int64(len(hdr)) {
+		return FormatUnknown, ErrFileTooSmall
 	}
 	return FormatUnknown, ErrUnknownFormat
 }

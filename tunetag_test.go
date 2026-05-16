@@ -141,8 +141,36 @@ func TestDetect_Unknown(t *testing.T) {
 }
 
 func TestDetect_EmptyStream(t *testing.T) {
-	if _, err := Detect(bytes.NewReader(nil)); !errors.Is(err, ErrUnknownFormat) {
-		t.Errorf("got %v, want ErrUnknownFormat", err)
+	_, err := Detect(bytes.NewReader(nil))
+	if !errors.Is(err, ErrEmptyFile) {
+		t.Errorf("got %v, want ErrEmptyFile", err)
+	}
+	// Refines ErrUnknownFormat, so existing callers that branch on
+	// the older sentinel must keep working.
+	if !errors.Is(err, ErrUnknownFormat) {
+		t.Errorf("ErrEmptyFile should also match ErrUnknownFormat, got %v", err)
+	}
+}
+
+func TestDetect_TooSmall(t *testing.T) {
+	for size := 1; size < 12; size++ {
+		body := bytes.Repeat([]byte{0xAB}, size)
+		_, err := Detect(bytes.NewReader(body))
+		if !errors.Is(err, ErrFileTooSmall) {
+			t.Errorf("size=%d: got %v, want ErrFileTooSmall", size, err)
+		}
+		if !errors.Is(err, ErrUnknownFormat) {
+			t.Errorf("size=%d: ErrFileTooSmall should also match ErrUnknownFormat, got %v", size, err)
+		}
+	}
+	// Exactly the threshold (12 bytes) of garbage should still fall
+	// through to the generic ErrUnknownFormat, not ErrFileTooSmall.
+	_, err := Detect(bytes.NewReader(bytes.Repeat([]byte{0xAB}, 12)))
+	if errors.Is(err, ErrFileTooSmall) {
+		t.Errorf("12-byte garbage should be ErrUnknownFormat, not ErrFileTooSmall (got %v)", err)
+	}
+	if !errors.Is(err, ErrUnknownFormat) {
+		t.Errorf("12-byte garbage: got %v, want ErrUnknownFormat", err)
 	}
 }
 
