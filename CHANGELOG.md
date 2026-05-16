@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Detect` / `Open` が 0 バイト入力には新エラー `ErrEmptyFile`
+  （`"tunetag: empty file"`）、12 バイト未満で magic 不一致のときは
+  `ErrFileTooSmall`（`"tunetag: file too small to contain any tag"`）
+  を返すようになった。両エラーは `errors.Is(err, ErrUnknownFormat)`
+  で引き続き true を返すため、既存呼び出し側の判定は変更不要。
+
 ## [0.1.1] - 2026-05-15
 
 ### Fixed
