@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- WAV (RIFF/WAVE) support via the new `wav` subpackage. Both
+  classic LIST/INFO entries (INAM / IART / IPRD / ICRD / IGNR /
+  ICMT / ITRK / IMUS / …) and embedded `id3 ` chunks (an ID3v2
+  tag parsed via the existing `id3v2` package) are read and
+  written. Non-metadata chunks (`fmt `, `data`, `fact`, `JUNK`,
+  …) round-trip byte-for-byte; `WriteFile` rewrites atomically
+  via a sibling temp file and the RIFF size field is rebuilt.
+  RF64 / BW64 (64-bit RIFF) is detected and rejected with
+  `wav.ErrRF64Unsupported`.
+- New top-level entries `tunetag.FormatWAV` and `tunetag.OpenWAV`.
+  `Detect` recognises WAV from the `RIFF…WAVE` header at offsets
+  0 and 8. `Open` returns a `Tag` adapter that prefers the
+  embedded `id3 ` tag over LIST/INFO when both are present.
+  `Strip` removes both metadata containers from a WAV.
+- AIFF / AIFC support via the new `aiff` subpackage. NAME / AUTH
+  / "(c) " / ANNO text chunks (with multi-instance ANNO) and
+  embedded `ID3 ` chunks round-trip. Non-metadata chunks (COMM,
+  SSND, FVER, MARK, …) are preserved byte-for-byte. New
+  top-level entries `tunetag.FormatAIFF` and `tunetag.OpenAIFF`.
+- Ogg Vorbis / Ogg Opus read support via the new `ogg`
+  subpackage. The package demuxes the first logical bitstream,
+  detects the codec from the identification packet, and parses
+  the comment packet (with `0x03 "vorbis"` or `"OpusTags"`
+  prefix stripped). Vorbis Comment parsing is shared with the
+  `flac` package via the newly-exported `flac.ParseVorbisComment`.
+  Write is not yet supported (`ogg.ErrWriteNotSupported`). New
+  top-level entries `tunetag.FormatOgg` and `tunetag.OpenOgg`.
+- APEv2 read+write via the new `ape` subpackage. Locates an
+  APEv2 footer at the end of any container (Monkey's Audio
+  `.ape`, WavPack `.wv`, but also MP3 / MPC / OFR). An ID3v1
+  trailer following the APEv2 tag is preserved across writes.
+  APEv1 (version 1000) is detected and rejected with
+  `ape.ErrUnsupportedVersion`. New top-level entries
+  `tunetag.FormatAPE` and `tunetag.OpenAPE`. `Detect` recognises
+  APEv2 footers at the end of the file.
+- Raw ADTS AAC support via the new `aac` subpackage. Reads any
+  leading ID3v2 prefix and trailing ID3v1 trailer; an untagged
+  raw ADTS file is now recognised as `FormatAAC` so
+  `tunetag.Open` returns an empty tag instead of
+  `ErrUnknownFormat`. `aac.IsADTS` is exposed for callers that
+  want to detect ADTS sync independently. New top-level entries
+  `tunetag.FormatAAC` and `tunetag.OpenAAC`.
+- `flac.ParseVorbisComment` is now a public wrapper around the
+  package-internal parser, so callers outside FLAC (notably the
+  new `ogg` package) can decode Vorbis Comment blocks without
+  duplicating the format.
+- CLI: `tunetag print / dump / set / strip / cover` now accept
+  `.wav`, `.aif` / `.aiff` / `.aifc`, `.ogg` / `.opus` (read
+  paths only), `.ape` / `.wv`, and `.aac` paths.
+
 ## [0.1.2] - 2026-05-16
 
 ### Added

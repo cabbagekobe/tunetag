@@ -5,10 +5,15 @@ import (
 	"strings"
 
 	"github.com/cabbagekobe/tunetag"
+	"github.com/cabbagekobe/tunetag/aac"
+	"github.com/cabbagekobe/tunetag/aiff"
+	"github.com/cabbagekobe/tunetag/ape"
 	"github.com/cabbagekobe/tunetag/flac"
 	"github.com/cabbagekobe/tunetag/id3v1"
 	"github.com/cabbagekobe/tunetag/id3v2"
 	"github.com/cabbagekobe/tunetag/mp4"
+	"github.com/cabbagekobe/tunetag/ogg"
+	"github.com/cabbagekobe/tunetag/wav"
 )
 
 // cmdDump prints every parsed field, unlike `print` which shows only
@@ -35,6 +40,16 @@ func cmdDump(args []string) error {
 		return dumpFLAC(path)
 	case tunetag.FormatMP4:
 		return dumpMP4(path)
+	case tunetag.FormatWAV:
+		return dumpWAV(path)
+	case tunetag.FormatAIFF:
+		return dumpAIFF(path)
+	case tunetag.FormatOgg:
+		return dumpOgg(path)
+	case tunetag.FormatAPE:
+		return dumpAPE(path)
+	case tunetag.FormatAAC:
+		return dumpAAC(path)
 	}
 	return fmt.Errorf("dump: unsupported format %s", format)
 }
@@ -218,4 +233,116 @@ func head(b []byte, n int) []byte {
 		return b
 	}
 	return b[:n]
+}
+
+// --- AIFF ----------------------------------------------------
+
+func dumpAIFF(path string) error {
+	f, err := aiff.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Form type: %s\n", f.FormType)
+	fmt.Printf("Text chunks: %d\n", len(f.Text))
+	for k, v := range f.Text {
+		fmt.Printf("   %s = %q\n", k, v)
+	}
+	fmt.Printf("Annotations: %d\n", len(f.Annotations))
+	for i, a := range f.Annotations {
+		fmt.Printf("   [%d] %q\n", i, a)
+	}
+	if f.ID3 == nil {
+		fmt.Println("ID3 chunk: (none)")
+		return nil
+	}
+	fmt.Printf("ID3 chunk: Version=%s FrameCount=%d\n", f.ID3.Version, len(f.ID3.Frames))
+	for _, fr := range f.ID3.Frames {
+		fmt.Printf("   %s\n", fr.ID())
+	}
+	return nil
+}
+
+// --- Ogg -----------------------------------------------------
+
+func dumpOgg(path string) error {
+	f, err := ogg.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Codec:  %s\n", f.Codec)
+	fmt.Printf("Vendor: %q\n", f.Vendor)
+	if f.Comments != nil {
+		fmt.Printf("Comments: %d\n", len(f.Comments.Comments))
+		for _, c := range f.Comments.Comments {
+			fmt.Printf("   %s\n", c)
+		}
+	}
+	return nil
+}
+
+// --- APE -----------------------------------------------------
+
+func dumpAPE(path string) error {
+	t, err := ape.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("APEv2 (has-header=%t): %d items\n", t.HasHeader, len(t.Items))
+	for _, it := range t.Items {
+		switch it.Type {
+		case ape.ItemBinary:
+			fmt.Printf("   [bin] %s  %d bytes\n", it.Key, len(it.Value))
+		case ape.ItemURL:
+			fmt.Printf("   [url] %s = %q\n", it.Key, it.String())
+		default:
+			fmt.Printf("   %s = %q\n", it.Key, it.String())
+		}
+	}
+	return nil
+}
+
+// --- AAC -----------------------------------------------------
+
+func dumpAAC(path string) error {
+	f, err := aac.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if f.V2 == nil {
+		fmt.Println("ID3v2: (none)")
+	} else {
+		fmt.Printf("ID3v2: Version=%s FrameCount=%d\n", f.V2.Version, len(f.V2.Frames))
+		for _, fr := range f.V2.Frames {
+			fmt.Printf("   %s\n", fr.ID())
+		}
+	}
+	if f.V1 == nil {
+		fmt.Println("ID3v1: (none)")
+		return nil
+	}
+	fmt.Printf("ID3v1: Title=%q Artist=%q Album=%q Year=%q\n",
+		f.V1.Title, f.V1.Artist, f.V1.Album, f.V1.Year)
+	return nil
+}
+
+// --- WAV -----------------------------------------------------
+
+func dumpWAV(path string) error {
+	f, err := wav.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("LIST/INFO entries: %d\n", len(f.Info))
+	for _, it := range f.Info {
+		fmt.Printf("   %s = %q\n", it.ID, it.Value)
+	}
+	if f.ID3 == nil {
+		fmt.Println("id3 chunk: (none)")
+		return nil
+	}
+	fmt.Printf("id3 chunk: Version=%s FrameCount=%d\n", f.ID3.Version, len(f.ID3.Frames))
+	for _, fr := range f.ID3.Frames {
+		fmt.Printf("   %s\n", fr.ID())
+	}
+	return nil
 }

@@ -6,9 +6,12 @@ import (
 	"os"
 
 	"github.com/cabbagekobe/tunetag"
+	"github.com/cabbagekobe/tunetag/aac"
+	"github.com/cabbagekobe/tunetag/aiff"
 	"github.com/cabbagekobe/tunetag/flac"
 	"github.com/cabbagekobe/tunetag/id3v2"
 	"github.com/cabbagekobe/tunetag/mp4"
+	"github.com/cabbagekobe/tunetag/wav"
 )
 
 func cmdCover(args []string) error {
@@ -80,6 +83,52 @@ func cmdCover(args []string) error {
 		f.Tag.Remove(mp4.KeyCover)
 		f.Tag.AddCover(data)
 		return f.WriteFile(path)
+	case tunetag.FormatWAV:
+		f, err := wav.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		// WAV carries cover art only via an embedded id3 chunk;
+		// create one if the file doesn't already have it.
+		if f.ID3 == nil {
+			f.ID3 = &id3v2.Tag{Version: id3v2.V24, Padding: 0}
+		}
+		f.ID3.RemoveFrames("APIC")
+		f.ID3.AddFrame(coverAPIC(data))
+		return f.WriteFile(path)
+	case tunetag.FormatAIFF:
+		f, err := aiff.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if f.ID3 == nil {
+			f.ID3 = &id3v2.Tag{Version: id3v2.V24, Padding: 0}
+		}
+		f.ID3.RemoveFrames("APIC")
+		f.ID3.AddFrame(coverAPIC(data))
+		return f.WriteFile(path)
+	case tunetag.FormatAAC:
+		f, err := aac.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if f.V2 == nil {
+			f.V2 = &id3v2.Tag{Version: id3v2.V24, Padding: 0}
+		}
+		f.V2.RemoveFrames("APIC")
+		f.V2.AddFrame(coverAPIC(data))
+		return f.WriteFile(path)
 	}
 	return fmt.Errorf("cover --set: unsupported format %s", format)
+}
+
+// coverAPIC builds a CoverFront APIC frame from arbitrary image
+// bytes. Shared by every ID3v2-backed container.
+func coverAPIC(data []byte) *id3v2.PictureFrame {
+	return &id3v2.PictureFrame{
+		Encoding:    id3v2.EncUTF8,
+		MIME:        guessMIME(data),
+		PictureType: 3, // CoverFront
+		Data:        data,
+	}
 }

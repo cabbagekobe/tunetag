@@ -4,13 +4,15 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/cabbagekobe/tunetag.svg)](https://pkg.go.dev/github.com/cabbagekobe/tunetag)
 
 Pure Go audio metadata library. Reads and writes tags for **MP3**,
-**FLAC**, and **MP4 / M4A** using only the Go standard library — no
-cgo, no bundled WASM, no external taglib.
+**FLAC**, **MP4 / M4A**, **WAV**, **AIFF / AIFC**, **APEv2**
+(Monkey's Audio / WavPack), and raw **AAC**. Reads tags for
+**Ogg Vorbis** and **Ogg Opus**. All using only the Go standard
+library — no cgo, no bundled WASM, no external taglib.
 
 ## Status
 
 Approaching feature-complete for v1. Read paths are solid for all
-three formats. Write paths cover:
+four formats. Write paths cover:
 
 - **MP3**: ID3v1, ID3v2.2, ID3v2.3, ID3v2.4. Writes use in-place
   overwrites when the new tag fits in the existing slot and atomic
@@ -24,6 +26,10 @@ three formats. Write paths cover:
   patching would push a 32-bit chunk offset past 2^32-1, every stco
   in the file is auto-promoted to co64. Fragmented MP4 (mvex / moof)
   is detected and rejected.
+- **WAV (RIFF/WAVE)**: LIST/INFO entries and embedded `id3 ` chunks
+  (ID3v2 inside WAV) both round-trip. Non-metadata chunks
+  (`fmt `, `data`, `fact`, `JUNK`, …) are preserved byte-for-byte.
+  RF64 / BW64 (64-bit RIFF) is detected and rejected.
 
 ## Install
 
@@ -53,6 +59,18 @@ Requires Go 1.23 or later.
 | MP4 stco / co64 patch       | ✅ | ✅ | shifted by moov delta on rewrite |
 | stco → co64 auto promotion  | — | ✅ | triggered when entries overflow |
 | Fragmented MP4 (mvex/moof)  | — | ❌ | rejected on write |
+| WAV LIST/INFO               | ✅ | ✅ | INAM / IART / IPRD / ICRD / IGNR / ICMT / ITRK |
+| WAV embedded `id3 ` chunk   | ✅ | ✅ | full ID3v2 tag round-trip (incl. APIC) |
+| WAV non-metadata chunks     | ✅ | ✅ | `fmt `, `data`, `fact`, `JUNK`, … preserved verbatim |
+| RF64 / BW64 (64-bit RIFF)   | — | ❌ | detected and rejected |
+| AIFF / AIFC text chunks     | ✅ | ✅ | NAME / AUTH / "(c) " / ANNO (multi-instance) |
+| AIFF embedded `ID3 ` chunk  | ✅ | ✅ | full ID3v2 round-trip; preferred over text chunks |
+| AIFF non-metadata chunks    | ✅ | ✅ | COMM / SSND / FVER / MARK / … preserved verbatim |
+| Ogg Vorbis comment header   | ✅ | ❌ | re-paging not yet implemented |
+| Ogg Opus comment header     | ✅ | ❌ | re-paging not yet implemented |
+| APEv2 (.ape / .wv / any)    | ✅ | ✅ | text + binary items, with/without header, ID3v1-coexistence |
+| APEv1                       | — | ❌ | refused with ErrUnsupportedVersion |
+| Raw AAC (ADTS)              | ✅ | ✅ | leading ID3v2 prefix + trailing ID3v1; bare ADTS recognised |
 
 ## Usage
 
@@ -112,6 +130,84 @@ if err := m.WriteFile("song.m4a"); err != nil {
     log.Fatal(err)
 }
 ```
+
+### WAV
+
+```go
+w, err := wav.ReadFile("song.wav")
+if err != nil { log.Fatal(err) }
+// LIST/INFO entries:
+w.SetInfo(wav.InfoTitle,  "New Title")
+w.SetInfo(wav.InfoArtist, "New Artist")
+w.SetInfo(wav.InfoDate,   "2026")
+// Or use the embedded id3 chunk for richer fields (APIC, etc.):
+if w.ID3 == nil {
+    w.ID3 = &id3v2.Tag{Version: id3v2.V24, Padding: 0}
+}
+w.ID3.SetTitle("New Title")
+if err := w.WriteFile("song.wav"); err != nil { log.Fatal(err) }
+```
+
+When both a LIST/INFO chunk and an `id3 ` chunk are present, the
+common `tunetag.Tag` interface prefers the `id3 ` chunk's values.
+RF64 / BW64 (64-bit RIFF) files are rejected with
+`wav.ErrRF64Unsupported` rather than silently mis-parsed.
+
+### AIFF / AIFC
+
+```go
+a, err := aiff.ReadFile("song.aif")
+if err != nil { log.Fatal(err) }
+a.SetTitle("New Title")     // NAME chunk
+a.SetAuthor("New Artist")   // AUTH chunk
+// Or use the embedded ID3 tag for richer fields:
+if a.ID3 == nil { a.ID3 = &id3v2.Tag{Version: id3v2.V24} }
+a.ID3.SetAlbum("Album")
+a.ID3.SetText("TDRC", "2026")
+if err := a.WriteFile("song.aif"); err != nil { log.Fatal(err) }
+```
+
+### Ogg Vorbis / Opus (read-only)
+
+```go
+o, err := ogg.ReadFile("song.ogg")
+if err != nil { log.Fatal(err) }
+fmt.Println(o.Codec, o.Title(), o.Artist(), o.Year())
+```
+
+Writing Ogg comments requires re-paging (segment-table lacing,
+CRC recomputation, and potentially shifting downstream pages),
+which is not yet implemented. `WriteFile` returns
+`ogg.ErrWriteNotSupported`.
+
+### APEv2 (Monkey's Audio / WavPack)
+
+```go
+t, err := ape.ReadFile("song.wv")
+if err != nil { log.Fatal(err) }
+t.Set(ape.KeyTitle,  "New Title")
+t.Set(ape.KeyArtist, "New Artist")
+t.Set(ape.KeyYear,   "2026")
+if err := t.WriteFile("song.wv"); err != nil { log.Fatal(err) }
+```
+
+The same package works on any file with an APEv2 trailer (MPC,
+MP3-with-APE, etc.). An ID3v1 trailer following the APEv2 tag is
+preserved across writes.
+
+### Raw AAC (ADTS)
+
+```go
+a, err := aac.ReadFile("song.aac")
+if err != nil { log.Fatal(err) }
+if a.V2 == nil { a.V2 = &id3v2.Tag{Version: id3v2.V24} }
+a.V2.SetTitle("New Title")
+if err := a.WriteFile("song.aac"); err != nil { log.Fatal(err) }
+```
+
+Bare ADTS files (no tags at all) are recognised as
+`FormatAAC` so `tunetag.Open` succeeds and returns an empty tag
+rather than `ErrUnknownFormat`.
 
 ## CLI
 

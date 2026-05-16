@@ -1,8 +1,12 @@
 // Package tunetag is a pure Go audio metadata library supporting
 // MP3 (ID3v1, ID3v2.2/2.3/2.4), FLAC (Vorbis Comment + Picture),
-// and MP4/M4A (iTunes-style ilst). It reads and writes tags using
-// only the Go standard library — no cgo and no bundled native
-// binaries.
+// MP4/M4A (iTunes-style ilst), WAV (RIFF LIST/INFO and embedded
+// id3 chunks), AIFF / AIFC (text chunks + embedded ID3),
+// Ogg Vorbis / Ogg Opus (Vorbis Comment, read-only), APEv2
+// (Monkey's Audio .ape, WavPack .wv, or any file with an APEv2
+// trailer), and raw ADTS AAC (.aac, with optional ID3v2 prefix
+// and ID3v1 trailer). It reads and writes tags using only the
+// Go standard library — no cgo and no bundled native binaries.
 //
 // # Decision tree
 //
@@ -37,6 +41,17 @@
 //     Picture blocks; unknown blocks round-trip verbatim.
 //   - [github.com/cabbagekobe/tunetag/mp4]: iTunes-style ilst,
 //     including freeform "----" atoms.
+//   - [github.com/cabbagekobe/tunetag/wav]: RIFF LIST/INFO entries
+//     and embedded "id3 " chunks (ID3v2 inside WAV).
+//   - [github.com/cabbagekobe/tunetag/aiff]: NAME / AUTH / "(c) "
+//     / ANNO text chunks and embedded "ID3 " chunks.
+//   - [github.com/cabbagekobe/tunetag/ogg]: Vorbis Comment metadata
+//     from Ogg Vorbis and Ogg Opus streams (read-only).
+//   - [github.com/cabbagekobe/tunetag/ape]: APEv2 tags at the end
+//     of any file, including Monkey's Audio (.ape) and WavPack
+//     (.wv).
+//   - [github.com/cabbagekobe/tunetag/aac]: raw ADTS AAC, with
+//     optional leading ID3v2 and trailing ID3v1.
 //
 // # Concurrency
 //
