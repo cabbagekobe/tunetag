@@ -151,14 +151,13 @@ func Read(rs io.ReadSeeker) (*Tag, error) {
 	flags := binary.LittleEndian.Uint32(foot[20:24])
 
 	hasHeader := flags&FlagHasHeader != 0
-	// Body offset: footerStart - (size - 32) gives the first byte after
-	// any header. If hasHeader, the header itself sits 32 bytes earlier.
+	// APEv2 footer field `size` covers items + footer only (the
+	// optional 32-byte header is NOT counted). So the items
+	// region always starts at footerStart - (size - 32),
+	// regardless of whether a header is present — the header
+	// occupies the 32 bytes BEFORE that, but we never need to
+	// read it (its content mirrors the footer).
 	bodyStart := footerStart - int64(size) + 32
-	if hasHeader {
-		bodyStart = footerStart - int64(size)
-		// The header is 32 bytes at this position; skip past it.
-		bodyStart += 32
-	}
 	if bodyStart < 0 || bodyStart > footerStart {
 		return nil, fmt.Errorf("ape: footer claims tag size %d that overflows file", size)
 	}
@@ -217,7 +216,16 @@ func locateFooter(rs io.ReadSeeker, end int64) (int64, error) {
 }
 
 func parseItems(body []byte, count uint32) ([]Item, error) {
-	items := make([]Item, 0, count)
+	// Cap the initial capacity. An APEv2 item is at least 9 bytes
+	// on disk (4-byte value-length + 4-byte flags + 1-byte
+	// key-NUL); body cannot physically hold more than len(body)/9
+	// items. Without this guard, a hostile footer claiming count
+	// = 4 GiB would force a multi-hundred-GiB allocation.
+	capHint := count
+	if int64(capHint) > int64(len(body))/9 {
+		capHint = uint32(len(body) / 9)
+	}
+	items := make([]Item, 0, capHint)
 	i := 0
 	for k := uint32(0); k < count; k++ {
 		if i+8 > len(body) {

@@ -97,6 +97,10 @@ const (
 // Read parses the metadata region of an AIFF / AIFC file. Audio
 // chunks are not decoded; their bytes are preserved.
 func Read(rs io.ReadSeeker) (*File, error) {
+	end, err := rs.Seek(0, io.SeekEnd)
+	if err != nil {
+		return nil, err
+	}
 	if _, err := rs.Seek(0, io.SeekStart); err != nil {
 		return nil, err
 	}
@@ -127,6 +131,17 @@ func Read(rs io.ReadSeeker) (*File, error) {
 		}
 		id := string(ch[0:4])
 		size := binary.BigEndian.Uint32(ch[4:8])
+		// Bound the allocation against the remaining file size so
+		// a malformed (or hostile) chunk header claiming size=4 GiB
+		// doesn't force a 4 GiB allocation before the subsequent
+		// ReadFull fails.
+		pos, err := rs.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return nil, err
+		}
+		if int64(size) > end-pos {
+			return nil, fmt.Errorf("aiff: chunk %q declared size %d exceeds remaining file (%d bytes)", id, size, end-pos)
+		}
 		body := make([]byte, size)
 		if _, err := io.ReadFull(rs, body); err != nil {
 			return nil, fmt.Errorf("aiff: chunk %q short body (%d bytes): %w", id, size, err)

@@ -41,6 +41,24 @@ func writeTemp(t *testing.T, body []byte) string {
 	return p
 }
 
+func TestRead_RejectsOversizedChunk(t *testing.T) {
+	// FORM/AIFF whose first chunk declares size = 4 GiB but the
+	// file is tiny. Must error with a sane message rather than
+	// attempt a multi-GiB allocation.
+	var pay bytes.Buffer
+	pay.WriteString("COMM")
+	binary.Write(&pay, binary.BigEndian, uint32(0xFFFFFFFF))
+	pay.Write(bytes.Repeat([]byte{0xAB}, 32))
+	raw := buildAIFF("AIFF", pay.Bytes())
+	_, err := Read(bytes.NewReader(raw))
+	if err == nil {
+		t.Fatal("expected error for oversized chunk, got nil")
+	}
+	if !bytes.Contains([]byte(err.Error()), []byte("exceeds remaining")) {
+		t.Errorf("err = %v, want one mentioning 'exceeds remaining'", err)
+	}
+}
+
 func TestRead_RejectsNonFORM(t *testing.T) {
 	_, err := Read(bytes.NewReader([]byte("notFORMatall")))
 	if !errors.Is(err, ErrNoAIFF) {

@@ -35,6 +35,29 @@ func writeTemp(t *testing.T, body []byte) string {
 	return p
 }
 
+func TestRead_RejectsOversizedItemCount(t *testing.T) {
+	// Craft an APEv2 footer that claims 0xFFFFFFFF items but
+	// holds no body bytes. The previous parseItems would
+	// allocate ~128 GiB (count * sizeof(Item)) before the
+	// first per-item read failed. With the capacity bound the
+	// allocation is harmless and the per-item read returns a
+	// clean error.
+	var footer bytes.Buffer
+	footer.Write(Preamble[:])
+	binary.Write(&footer, binary.LittleEndian, uint32(2000)) // version
+	binary.Write(&footer, binary.LittleEndian, uint32(32))   // size = footer only
+	binary.Write(&footer, binary.LittleEndian, uint32(0xFFFFFFFF))
+	binary.Write(&footer, binary.LittleEndian, uint32(0)) // flags
+	footer.Write(make([]byte, 8))                         // reserved
+	body := append([]byte("audio"), footer.Bytes()...)
+	_, err := Read(bytes.NewReader(body))
+	if err == nil {
+		t.Fatal("expected error parsing 4 GiB-item APE footer, got nil")
+	}
+	// We don't pin the exact message; just confirm we returned
+	// without panicking or hanging.
+}
+
 func TestRead_EmptyFile(t *testing.T) {
 	_, err := Read(bytes.NewReader(nil))
 	if !errors.Is(err, ErrNoTag) {

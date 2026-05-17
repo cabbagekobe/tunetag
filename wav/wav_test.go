@@ -66,6 +66,28 @@ func writeTemp(t *testing.T, name string, body []byte) string {
 
 // --- Read ------------------------------------------------------
 
+func TestRead_RejectsOversizedChunk(t *testing.T) {
+	// Craft a WAV whose first inner chunk declares size = 4 GiB
+	// even though the file is tiny. The previous reader would
+	// attempt make([]byte, 4 GiB) before the subsequent ReadFull
+	// failed; now we reject up front.
+	var pay bytes.Buffer
+	pay.WriteString("fmt ")
+	binary.Write(&pay, binary.LittleEndian, uint32(0xFFFFFFFF)) // claimed size
+	// Add a few real bytes so the file isn't empty.
+	pay.Write(bytes.Repeat([]byte{0xAB}, 32))
+	raw := buildWAV(pay.Bytes())
+
+	_, err := Read(bytes.NewReader(raw))
+	if err == nil {
+		t.Fatal("expected error for oversized chunk, got nil")
+	}
+	// Must be a sane error, not a panic/OOM.
+	if !bytes.Contains([]byte(err.Error()), []byte("exceeds remaining")) {
+		t.Errorf("err = %v, want one mentioning 'exceeds remaining'", err)
+	}
+}
+
 func TestRead_RejectsNonRIFF(t *testing.T) {
 	_, err := Read(bytes.NewReader([]byte("nope-not-riff-at-all")))
 	if !errors.Is(err, ErrNoWAV) {
