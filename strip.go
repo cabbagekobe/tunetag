@@ -7,6 +7,7 @@ import (
 	"github.com/cabbagekobe/tunetag/aac"
 	"github.com/cabbagekobe/tunetag/aiff"
 	"github.com/cabbagekobe/tunetag/ape"
+	"github.com/cabbagekobe/tunetag/asf"
 	"github.com/cabbagekobe/tunetag/flac"
 	"github.com/cabbagekobe/tunetag/id3v1"
 	"github.com/cabbagekobe/tunetag/id3v2"
@@ -44,11 +45,13 @@ func Strip(path string) error {
 	case FormatAIFF:
 		return stripAIFF(path)
 	case FormatOgg:
-		return ogg.ErrWriteNotSupported
+		return stripOgg(path)
 	case FormatAPE:
 		return stripAPE(path)
 	case FormatAAC:
 		return stripAAC(path)
+	case FormatASF:
+		return stripASF(path)
 	}
 	return ErrUnknownFormat
 }
@@ -102,6 +105,18 @@ func stripWAV(path string) error {
 	return src.WriteFile(path)
 }
 
+func stripOgg(path string) error {
+	src, err := ogg.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	// Empty the Vorbis Comment block while keeping the
+	// codec-default vendor string, which is required by the
+	// Vorbis / Opus specs.
+	src.Comments.Comments = nil
+	return src.WriteFile(path)
+}
+
 func stripAIFF(path string) error {
 	src, err := aiff.ReadFile(path)
 	if err != nil {
@@ -129,5 +144,19 @@ func stripAAC(path string) error {
 	}
 	src.V2 = nil
 	src.V1 = nil
+	return src.WriteFile(path)
+}
+
+func stripASF(path string) error {
+	src, err := asf.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	src.Title = ""
+	src.Author = ""
+	src.Copyright = ""
+	src.Description = ""
+	src.Rating = ""
+	src.Extended = nil
 	return src.WriteFile(path)
 }

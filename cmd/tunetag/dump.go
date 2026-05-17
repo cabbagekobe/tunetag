@@ -8,6 +8,7 @@ import (
 	"github.com/cabbagekobe/tunetag/aac"
 	"github.com/cabbagekobe/tunetag/aiff"
 	"github.com/cabbagekobe/tunetag/ape"
+	"github.com/cabbagekobe/tunetag/asf"
 	"github.com/cabbagekobe/tunetag/flac"
 	"github.com/cabbagekobe/tunetag/id3v1"
 	"github.com/cabbagekobe/tunetag/id3v2"
@@ -50,6 +51,8 @@ func cmdDump(args []string) error {
 		return dumpAPE(path)
 	case tunetag.FormatAAC:
 		return dumpAAC(path)
+	case tunetag.FormatASF:
+		return dumpASF(path)
 	}
 	return fmt.Errorf("dump: unsupported format %s", format)
 }
@@ -296,6 +299,37 @@ func dumpAPE(path string) error {
 			fmt.Printf("   [url] %s = %q\n", it.Key, it.String())
 		default:
 			fmt.Printf("   %s = %q\n", it.Key, it.String())
+		}
+	}
+	return nil
+}
+
+// --- ASF / WMA ------------------------------------------------
+
+func dumpASF(path string) error {
+	f, err := asf.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	fmt.Println("Content Description Object:")
+	fmt.Printf("   Title       = %q\n", f.Title)
+	fmt.Printf("   Author      = %q\n", f.Author)
+	fmt.Printf("   Copyright   = %q\n", f.Copyright)
+	fmt.Printf("   Description = %q\n", f.Description)
+	fmt.Printf("   Rating      = %q\n", f.Rating)
+	fmt.Printf("Extended Content Description Object: %d descriptors\n", len(f.Extended))
+	for _, d := range f.Extended {
+		switch d.Type {
+		case asf.TypeString:
+			fmt.Printf("   %s = %q (string)\n", d.Name, d.String())
+		case asf.TypeBinary:
+			fmt.Printf("   %s = [%d bytes] (binary)\n", d.Name, len(d.Value))
+		case asf.TypeBool:
+			fmt.Printf("   %s = %v (bool)\n", d.Name, d.Uint32() != 0)
+		case asf.TypeDWord, asf.TypeWord, asf.TypeQWord:
+			fmt.Printf("   %s = %d (numeric)\n", d.Name, d.Uint32())
+		default:
+			fmt.Printf("   %s [type=%d] = [%d bytes]\n", d.Name, d.Type, len(d.Value))
 		}
 	}
 	return nil

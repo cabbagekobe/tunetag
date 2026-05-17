@@ -4,15 +4,15 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/cabbagekobe/tunetag.svg)](https://pkg.go.dev/github.com/cabbagekobe/tunetag)
 
 Pure Go audio metadata library. Reads and writes tags for **MP3**,
-**FLAC**, **MP4 / M4A**, **WAV**, **AIFF / AIFC**, **APEv2**
-(Monkey's Audio / WavPack), and raw **AAC**. Reads tags for
-**Ogg Vorbis** and **Ogg Opus**. All using only the Go standard
-library — no cgo, no bundled WASM, no external taglib.
+**FLAC**, **MP4 / M4A**, **WAV**, **AIFF / AIFC**, **Ogg Vorbis /
+Opus**, **APEv2** (Monkey's Audio / WavPack), raw **AAC**, and
+**ASF / WMA**. All using only the Go standard library — no cgo,
+no bundled WASM, no external taglib.
 
 ## Status
 
-Approaching feature-complete for v1. Read paths are solid for all
-four formats. Write paths cover:
+Approaching feature-complete for v1. Read and write paths are
+solid for every supported container:
 
 - **MP3**: ID3v1, ID3v2.2, ID3v2.3, ID3v2.4. Writes use in-place
   overwrites when the new tag fits in the existing slot and atomic
@@ -30,6 +30,34 @@ four formats. Write paths cover:
   (ID3v2 inside WAV) both round-trip. Non-metadata chunks
   (`fmt `, `data`, `fact`, `JUNK`, …) are preserved byte-for-byte.
   RF64 / BW64 (64-bit RIFF) is detected and rejected.
+- **AIFF / AIFC**: NAME / AUTH / "(c) " / ANNO text chunks (with
+  multi-instance ANNO) and embedded `ID3 ` chunks round-trip;
+  non-metadata chunks (COMM / SSND / FVER / MARK / …) pass
+  through verbatim. Big-endian sizes; both AIFF and AIFC form
+  types are recognised.
+- **Ogg Vorbis / Opus**: comment packets round-trip with full
+  re-paging — the writer encodes a fresh comment packet, splits
+  it across as many pages as needed (with continuation flags and
+  per-page CRC-32), and rewrites subsequent pages of the same
+  logical bitstream with shifted sequence numbers. Cover art via
+  Xiph's `METADATA_BLOCK_PICTURE` (base64 of a FLAC PICTURE
+  block) is supported.
+- **APEv2** (Monkey's Audio `.ape`, WavPack `.wv`, or any file
+  with an APEv2 trailer): text items, binary items, and cover
+  art ("Cover Art (Front)" / "(Back)" / "(Other)") round-trip.
+  ID3v1 trailers after the APEv2 tag are preserved.
+- **Raw AAC (ADTS)**: optional leading ID3v2 + trailing ID3v1
+  round-trip; bare ADTS files (no tags) are recognised so
+  `tunetag.Open` returns an empty tag rather than
+  `ErrUnknownFormat`.
+- **ASF / WMA**: Content Description Object (Title / Author /
+  Copyright / Description / Rating) and Extended Content
+  Description Object (any WM/* descriptor, with typed
+  Bool / Word / DWord / QWord / String / Binary values). WM/Picture
+  cover art is supported. Non-metadata Header child objects
+  (File Properties, Stream Properties, Header Extension, Codec
+  List, …) and the Data + Index objects round-trip
+  byte-for-byte.
 
 ## Install
 
@@ -66,11 +94,17 @@ Requires Go 1.23 or later.
 | AIFF / AIFC text chunks     | ✅ | ✅ | NAME / AUTH / "(c) " / ANNO (multi-instance) |
 | AIFF embedded `ID3 ` chunk  | ✅ | ✅ | full ID3v2 round-trip; preferred over text chunks |
 | AIFF non-metadata chunks    | ✅ | ✅ | COMM / SSND / FVER / MARK / … preserved verbatim |
-| Ogg Vorbis comment header   | ✅ | ❌ | re-paging not yet implemented |
-| Ogg Opus comment header     | ✅ | ❌ | re-paging not yet implemented |
+| Ogg Vorbis comment header   | ✅ | ✅ | re-pages comment packet + renumbers / re-CRCs subsequent pages |
+| Ogg Opus comment header     | ✅ | ✅ | as above; supports OpusHead / OpusTags variant |
+| Ogg METADATA_BLOCK_PICTURE  | ✅ | ✅ | base64-wrapped FLAC PICTURE block; shared format helpers |
 | APEv2 (.ape / .wv / any)    | ✅ | ✅ | text + binary items, with/without header, ID3v1-coexistence |
+| APEv2 Cover Art             | ✅ | ✅ | "Cover Art (Front)" / "(Back)" / "(Other)" binary items |
 | APEv1                       | — | ❌ | refused with ErrUnsupportedVersion |
 | Raw AAC (ADTS)              | ✅ | ✅ | leading ID3v2 prefix + trailing ID3v1; bare ADTS recognised |
+| ASF / WMA CDO               | ✅ | ✅ | Title / Author / Copyright / Description / Rating |
+| ASF / WMA ECDO              | ✅ | ✅ | WM/AlbumTitle / WM/AlbumArtist / WM/Year / WM/Genre / WM/TrackNumber / WM/Composer / WM/PartOfSet / … |
+| ASF WM/Picture              | ✅ | ✅ | full cover-art round-trip |
+| ASF non-metadata objects    | ✅ | ✅ | File Properties / Stream Properties / Header Extension / Data / Index preserved verbatim |
 
 ## Usage
 
@@ -167,18 +201,32 @@ a.ID3.SetText("TDRC", "2026")
 if err := a.WriteFile("song.aif"); err != nil { log.Fatal(err) }
 ```
 
-### Ogg Vorbis / Opus (read-only)
+### Ogg Vorbis / Opus
 
 ```go
 o, err := ogg.ReadFile("song.ogg")
 if err != nil { log.Fatal(err) }
-fmt.Println(o.Codec, o.Title(), o.Artist(), o.Year())
+o.Comments.Set("TITLE",  "New Title")
+o.Comments.Set("ARTIST", "New Artist")
+if err := o.WriteFile("song.ogg"); err != nil { log.Fatal(err) }
 ```
 
-Writing Ogg comments requires re-paging (segment-table lacing,
-CRC recomputation, and potentially shifting downstream pages),
-which is not yet implemented. `WriteFile` returns
-`ogg.ErrWriteNotSupported`.
+The writer encodes the new comment packet, re-pages it (a single
+page when the bytes fit; multiple pages with continuation flags
+when they don't), and rewrites the per-page sequence numbers +
+CRC-32 for every subsequent page of the same logical bitstream.
+Concurrently-multiplexed streams pass through unchanged.
+
+Cover art uses the Xiph `METADATA_BLOCK_PICTURE` convention (the
+value is base64 of a FLAC PICTURE block):
+
+```go
+o.AddPicture(&flac.Picture{
+    PictureType: 3, // CoverFront
+    MIME:        "image/jpeg",
+    Data:        jpegBytes,
+})
+```
 
 ### APEv2 (Monkey's Audio / WavPack)
 
@@ -195,6 +243,14 @@ The same package works on any file with an APEv2 trailer (MPC,
 MP3-with-APE, etc.). An ID3v1 trailer following the APEv2 tag is
 preserved across writes.
 
+Cover art is stored as a binary item under "Cover Art (Front)"
+(or "(Back)" / "(Other)"). The on-disk value is
+`<filename>\x00<image bytes>`:
+
+```go
+t.AddPicture(&ape.Picture{Filename: "cover.jpg", Data: jpegBytes})
+```
+
 ### Raw AAC (ADTS)
 
 ```go
@@ -208,6 +264,29 @@ if err := a.WriteFile("song.aac"); err != nil { log.Fatal(err) }
 Bare ADTS files (no tags at all) are recognised as
 `FormatAAC` so `tunetag.Open` succeeds and returns an empty tag
 rather than `ErrUnknownFormat`.
+
+### ASF / WMA
+
+```go
+w, err := asf.ReadFile("song.wma")
+if err != nil { log.Fatal(err) }
+w.Title = "New Title"
+w.SetArtist("New Artist")  // CDO Author
+w.SetAlbum("Best of 2026") // WM/AlbumTitle in the ECDO
+w.SetYear(2026)
+w.SetTrackNumber(3, 12)
+if err := w.WriteFile("song.wma"); err != nil { log.Fatal(err) }
+```
+
+The package handles only ASF metadata (Header Object → Content
+Description + Extended Content Description). File Properties,
+Stream Properties, Header Extension, Codec List, Data Object,
+and Index Object(s) round-trip byte-for-byte. RF64-style 64-bit
+sizes inside Header Extension objects are preserved verbatim
+(they live inside opaque child object bodies).
+
+WM/Picture cover art is accessible via `File.Pictures()` /
+`AddPicture` / `RemovePictures` for full read-write round-trip.
 
 ## CLI
 

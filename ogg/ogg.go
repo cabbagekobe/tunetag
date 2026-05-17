@@ -10,15 +10,13 @@
 //   - Opus   : "OpusTags" (8 bytes), followed by the Vorbis
 //     comment block (no framing bit).
 //
-// This package parses only the first logical bitstream's header
-// packets — enough to extract the comment header. The audio
-// packets and any further pages are not decoded.
-//
-// Write is not yet supported. Rewriting an Ogg comment packet
-// involves re-paging (segment-table lacing, CRC recomputation,
-// and potentially shifting subsequent pages) and is non-trivial;
-// it will be added in a follow-up. For now the package returns
-// ErrWriteNotSupported from any write-style operation.
+// Read parses only the first logical bitstream's header packets
+// (the identification packet and the comment packet) and
+// captures enough state for WriteFile to splice in a re-paged
+// replacement comment packet. The audio packets are not
+// decoded; their bytes round-trip with sequence numbers
+// adjusted and per-page CRCs recomputed when the comment
+// packet's page count changes.
 //
 // A *File is not safe for concurrent use.
 package ogg
@@ -67,11 +65,6 @@ var (
 	// ErrTruncated is returned when the stream ends before the
 	// comment packet has been fully read.
 	ErrTruncated = errors.New("ogg: stream ended before comment header was complete")
-
-	// ErrWriteNotSupported is returned from WriteFile. Rewriting
-	// an Ogg comment packet requires re-paging logic that is not
-	// yet implemented.
-	ErrWriteNotSupported = errors.New("ogg: write not supported yet (re-paging not implemented)")
 )
 
 // File holds the parsed Vorbis-Comment metadata of an Ogg stream.
@@ -141,13 +134,6 @@ func ReadFile(path string) (*File, error) {
 	}
 	defer f.Close()
 	return Read(f)
-}
-
-// WriteFile is reserved for future use; currently always returns
-// ErrWriteNotSupported.
-func (f *File) WriteFile(path string) error {
-	_ = path
-	return ErrWriteNotSupported
 }
 
 // detectCodec inspects the first packet of a logical Ogg

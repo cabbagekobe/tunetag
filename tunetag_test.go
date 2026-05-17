@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/cabbagekobe/tunetag/ape"
+	"github.com/cabbagekobe/tunetag/asf"
 	"github.com/cabbagekobe/tunetag/flac"
 	"github.com/cabbagekobe/tunetag/id3v1"
 	"github.com/cabbagekobe/tunetag/id3v2"
@@ -99,6 +100,10 @@ func TestDetect_KnownFormats(t *testing.T) {
 		{"aifc", []byte{'F', 'O', 'R', 'M', 0, 0, 0, 0, 'A', 'I', 'F', 'C'}, FormatAIFF},
 		{"ogg", []byte{'O', 'g', 'g', 'S', 0, 0, 0, 0, 0, 0, 0, 0}, FormatOgg},
 		{"adts", []byte{0xFF, 0xF1, 0x50, 0x80, 0, 0, 0, 0, 0, 0, 0, 0}, FormatAAC},
+		{"asf", []byte{
+			0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11,
+			0xA6, 0xD9, 0x00, 0xAA, 0x00, 0x62, 0xCE, 0x6C,
+		}, FormatASF},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -627,6 +632,226 @@ func TestOpen_AAC_BareADTS(t *testing.T) {
 	}
 	if got.Title() != "" {
 		t.Errorf("Title = %q, want empty", got.Title())
+	}
+}
+
+// --- Pictures exposed via tunetag.Open -------------------------
+
+func TestOpen_OggPicture(t *testing.T) {
+	// Build an Ogg file via the package's own test helpers, add a
+	// cover via the public ogg API, then verify the top-level
+	// Tag.Pictures() forwards it correctly.
+	vc := &flac.VorbisComment{Vendor: "v", Comments: []string{"TITLE=Cover"}}
+	cbody, _ := vc.Encode()
+	commentPkt := append([]byte{0x03}, []byte("vorbis")...)
+	commentPkt = append(commentPkt, cbody...)
+	commentPkt = append(commentPkt, 0x01) // framing bit
+
+	identPkt := append([]byte{0x01}, []byte("vorbis")...)
+	identPkt = append(identPkt, make([]byte, 23)...)
+	stream := makeOggPage(7, 0, 0x02, identPkt)
+	stream = append(stream, makeOggPage(7, 1, 0, commentPkt)...)
+	stream = append(stream, makeOggPage(7, 2, 0, []byte{0, 0, 0, 0, 0x42, 0x43})...)
+	p := writeFile(t, "x.ogg", stream)
+
+	o, err := OpenOgg(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pic := &flac.Picture{
+		PictureType: 3,
+		MIME:        "image/jpeg",
+		Description: "front",
+		Data:        []byte{0xFF, 0xD8, 0xFF, 0xE0, 0xAB, 0xCD},
+	}
+	if err := o.AddPicture(pic); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.WriteFile(p); err != nil {
+		t.Fatal(err)
+	}
+
+	tag, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pics := tag.Pictures()
+	if len(pics) != 1 {
+		t.Fatalf("Pictures via Tag interface = %d, want 1", len(pics))
+	}
+	got := pics[0]
+	if got.MIME != "image/jpeg" || got.Description != "front" || !bytes.Equal(got.Data, pic.Data) {
+		t.Errorf("picture mismatch via Tag interface: %+v", got)
+	}
+}
+
+func TestOpen_APEPicture(t *testing.T) {
+	tag := &ape.Tag{HasHeader: true}
+	tag.Set("Title", "x")
+	pic := &ape.Picture{Filename: "cover.jpg", Data: []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x10, 0x20}}
+	if err := tag.AddPicture(pic); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := tag.Encode()
+	full := append([]byte("AUDIO_BODY"), body...)
+	p := writeFile(t, "x.ape", full)
+
+	common, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pics := common.Pictures()
+	if len(pics) != 1 {
+		t.Fatalf("Pictures via Tag interface = %d, want 1", len(pics))
+	}
+	got := pics[0]
+	// MIME is sniffed from the bytes since APE doesn't carry it.
+	if got.MIME != "image/jpeg" {
+		t.Errorf("sniffed MIME = %q, want image/jpeg", got.MIME)
+	}
+	if got.Description != "cover.jpg" {
+		t.Errorf("Description = %q, want %q (Filename)", got.Description, "cover.jpg")
+	}
+	if !bytes.Equal(got.Data, pic.Data) {
+		t.Errorf("data mismatch")
+	}
+}
+
+func TestSniffImageMIME(t *testing.T) {
+	cases := []struct {
+		body []byte
+		want string
+	}{
+		{[]byte{0xFF, 0xD8, 0xFF, 0xE0}, "image/jpeg"},
+		{[]byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}, "image/png"},
+		{[]byte("GIF89a..."), "image/gif"},
+		{[]byte("GIF87a..."), "image/gif"},
+		{[]byte{0x42, 0x4D, 0x10, 0x00}, "image/bmp"},
+		{[]byte("not an image"), ""},
+		{nil, ""},
+	}
+	for _, c := range cases {
+		if got := SniffImageMIME(c.body); got != c.want {
+			t.Errorf("SniffImageMIME(% X) = %q, want %q", c.body, got, c.want)
+		}
+	}
+}
+
+// --- ASF / WMA -------------------------------------------------
+
+func TestOpen_ASF(t *testing.T) {
+	// Build a minimal ASF file with a CDO and an ECDO. We rely
+	// on the asf package's exported writers indirectly by
+	// constructing a *asf.File and calling WriteFile.
+	src := &asf.File{
+		Title:  "WMA Title",
+		Author: "WMA Author",
+	}
+	src.SetAlbum("Best of 2026")
+	src.SetYear(2026)
+	src.SetTrackNumber(4, 10)
+	// Build a real path so WriteFile can be called.
+	p := filepath.Join(t.TempDir(), "x.wma")
+	// Initialise an empty file with just the magic Header
+	// object + a Data Object, so asf.ReadFile can be used as
+	// the foundation. Easiest: ask asf to round-trip a minimal
+	// in-memory file by writing once.
+	if err := os.WriteFile(p, buildEmptyASF(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Read what we just wrote, copy our state across, write.
+	scaffold, err := asf.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scaffold.Title = src.Title
+	scaffold.Author = src.Author
+	for _, d := range src.Extended {
+		scaffold.Extended = append(scaffold.Extended, d)
+	}
+	if err := scaffold.WriteFile(p); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Format() != FormatASF {
+		t.Errorf("Format = %s", got.Format())
+	}
+	if got.Title() != "WMA Title" || got.Artist() != "WMA Author" {
+		t.Errorf("Title=%q Artist=%q", got.Title(), got.Artist())
+	}
+	if got.Album() != "Best of 2026" || got.Year() != 2026 {
+		t.Errorf("Album=%q Year=%d", got.Album(), got.Year())
+	}
+	if n, total := got.TrackNumber(); n != 4 || total != 10 {
+		t.Errorf("Track = %d/%d", n, total)
+	}
+}
+
+// buildEmptyASF builds the smallest valid ASF file: just the
+// Header Object containing no children, followed by a Data
+// Object containing one byte. Used as a scaffold by the test
+// above.
+func buildEmptyASF() []byte {
+	// Header Object: GUID + size(8) + count(4) + reserved(2).
+	const headerObjBodyLen = 4 + 2 // count + reserved
+	hdrGUID := []byte{
+		0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11,
+		0xA6, 0xD9, 0x00, 0xAA, 0x00, 0x62, 0xCE, 0x6C,
+	}
+	dataGUID := []byte{
+		0x36, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11,
+		0xA6, 0xD9, 0x00, 0xAA, 0x00, 0x62, 0xCE, 0x6C,
+	}
+	var buf bytes.Buffer
+	buf.Write(hdrGUID)
+	sz := make([]byte, 8)
+	binary.LittleEndian.PutUint64(sz, 24+headerObjBodyLen)
+	buf.Write(sz)
+	cnt := make([]byte, 4)
+	binary.LittleEndian.PutUint32(cnt, 0)
+	buf.Write(cnt)
+	buf.WriteByte(0x01)
+	buf.WriteByte(0x02)
+	// Data Object with a single byte payload.
+	buf.Write(dataGUID)
+	binary.LittleEndian.PutUint64(sz, 24+1)
+	buf.Write(sz)
+	buf.WriteByte(0x00)
+	return buf.Bytes()
+}
+
+func TestStrip_ASF(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "x.wma")
+	if err := os.WriteFile(p, buildEmptyASF(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scaffold, err := asf.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scaffold.Title = "to be stripped"
+	scaffold.SetAlbum("also stripped")
+	if err := scaffold.WriteFile(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := Strip(p); err != nil {
+		t.Fatal(err)
+	}
+	tag, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tag.Title() != "" || tag.Album() != "" {
+		t.Errorf("after Strip: Title=%q Album=%q", tag.Title(), tag.Album())
+	}
+}
+
+func TestOpenASF_NonexistentPath(t *testing.T) {
+	if _, err := OpenASF("/nonexistent/x.wma"); err == nil {
+		t.Fatal("expected error opening missing ASF")
 	}
 }
 

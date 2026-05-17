@@ -8,6 +8,7 @@ import (
 	"github.com/cabbagekobe/tunetag/aac"
 	"github.com/cabbagekobe/tunetag/aiff"
 	"github.com/cabbagekobe/tunetag/ape"
+	"github.com/cabbagekobe/tunetag/asf"
 	"github.com/cabbagekobe/tunetag/flac"
 	"github.com/cabbagekobe/tunetag/id3v1"
 	"github.com/cabbagekobe/tunetag/id3v2"
@@ -47,7 +48,9 @@ func Detect(rs io.ReadSeeker) (Format, error) {
 	if _, err := rs.Seek(0, io.SeekStart); err != nil {
 		return FormatUnknown, err
 	}
-	var hdr [12]byte
+	// 16-byte sniff is enough for every supported format's start
+	// signature, including ASF's 16-byte Header Object GUID.
+	var hdr [16]byte
 	n, err := io.ReadFull(rs, hdr[:])
 	// Short streams are common and not an error: just sniff what we
 	// got and decide based on the bytes that did arrive.
@@ -77,6 +80,10 @@ func Detect(rs io.ReadSeeker) (Format, error) {
 	if n >= 4 && string(hdr[0:4]) == "OggS" {
 		return FormatOgg, nil
 	}
+	// ASF / WMA: 16-byte Header Object GUID at offset 0.
+	if n >= 16 && asf.IsHeaderGUID(hdr[:16]) {
+		return FormatASF, nil
+	}
 	// Raw ADTS AAC: 12-bit 0xFFF sync with layer 00.
 	if n >= 2 && aac.IsADTS(hdr[:n]) {
 		return FormatAAC, nil
@@ -97,9 +104,12 @@ func Detect(rs io.ReadSeeker) (Format, error) {
 			return FormatID3v1, nil
 		}
 	}
-	// Nothing matched. If the file is shorter than even our sniff
-	// buffer, no supported tag header could fit — say so explicitly.
-	if end < int64(len(hdr)) {
+	// Nothing matched. 12 bytes is the smallest non-ASF format
+	// header we recognise (RIFF+size+WAVE / FORM+size+AIFF /
+	// MP4's [0-3]=size [4-7]=ftyp + 4-byte brand). Anything
+	// shorter cannot contain a complete format header, so it
+	// gets the more specific ErrFileTooSmall.
+	if end < 12 {
 		return FormatUnknown, ErrFileTooSmall
 	}
 	return FormatUnknown, ErrUnknownFormat
@@ -151,10 +161,13 @@ func detectAPEFooter(rs io.ReadSeeker, end int64) (Format, bool) {
 //   - APEv2 (.ape, .wv, or any file with a trailing APEv2 tag).
 //   - AAC: leading ID3v2 if present, else trailing ID3v1, else
 //     an empty tag (so untagged .aac files still resolve).
+//   - ASF / WMA: the Content Description Object fields, with
+//     WM/AlbumArtist (in the Extended Content Description Object)
+//     preferred over the CDO's Author field when both exist.
 //
 // For format-specific writes, use OpenMP3, OpenFLAC, OpenMP4,
-// OpenWAV, OpenAIFF, OpenAPE, or OpenAAC directly. Ogg is
-// read-only at the moment.
+// OpenWAV, OpenAIFF, OpenOgg, OpenAPE, OpenAAC, or OpenASF
+// directly.
 func Open(path string) (Tag, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -220,6 +233,12 @@ func Open(path string) (Tag, error) {
 			return nil, err
 		}
 		return &aacTag{f: a}, nil
+	case FormatASF:
+		a, err := asf.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		return &asfTag{f: a}, nil
 	}
 	return nil, ErrUnknownFormat
 }
@@ -302,4 +321,13 @@ func OpenAPE(path string) (*ape.Tag, error) {
 // represented by a *aac.File with V2 == V1 == nil.
 func OpenAAC(path string) (*aac.File, error) {
 	return aac.ReadFile(path)
+}
+
+// OpenASF opens an ASF / WMA file. The returned *asf.File exposes
+// the Content Description Object fields (Title / Author /
+// Copyright / Description / Rating) plus the Extended Content
+// Description Object descriptors (Extended) and any embedded
+// WM/Picture entries.
+func OpenASF(path string) (*asf.File, error) {
+	return asf.ReadFile(path)
 }

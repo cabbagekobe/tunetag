@@ -8,9 +8,12 @@ import (
 	"github.com/cabbagekobe/tunetag"
 	"github.com/cabbagekobe/tunetag/aac"
 	"github.com/cabbagekobe/tunetag/aiff"
+	"github.com/cabbagekobe/tunetag/ape"
+	"github.com/cabbagekobe/tunetag/asf"
 	"github.com/cabbagekobe/tunetag/flac"
 	"github.com/cabbagekobe/tunetag/id3v2"
 	"github.com/cabbagekobe/tunetag/mp4"
+	"github.com/cabbagekobe/tunetag/ogg"
 	"github.com/cabbagekobe/tunetag/wav"
 )
 
@@ -118,6 +121,42 @@ func cmdCover(args []string) error {
 		f.V2.RemoveFrames("APIC")
 		f.V2.AddFrame(coverAPIC(data))
 		return f.WriteFile(path)
+	case tunetag.FormatASF:
+		f, err := asf.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		f.RemovePictures()
+		f.AddPicture(&asf.Picture{
+			Type: 3, // CoverFront
+			MIME: guessMIME(data),
+			Data: data,
+		})
+		return f.WriteFile(path)
+	case tunetag.FormatOgg:
+		f, err := ogg.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		f.RemovePictures()
+		if err := f.AddPicture(&flac.Picture{
+			PictureType: 3, // CoverFront
+			MIME:        guessMIME(data),
+			Data:        data,
+		}); err != nil {
+			return err
+		}
+		return f.WriteFile(path)
+	case tunetag.FormatAPE:
+		t, err := ape.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		t.RemovePictures()
+		if err := t.AddPicture(&ape.Picture{Data: data}); err != nil {
+			return err
+		}
+		return t.WriteFile(path)
 	}
 	return fmt.Errorf("cover --set: unsupported format %s", format)
 }

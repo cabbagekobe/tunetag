@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/cabbagekobe/tunetag/flac"
@@ -230,9 +231,89 @@ func buildPageSplit(serial, seq uint32, flags byte, body []byte) []byte {
 	return out.Bytes()
 }
 
-func TestWriteFile_ReturnsErrWriteNotSupported(t *testing.T) {
-	f := &File{}
-	if err := f.WriteFile("/tmp/whatever.ogg"); !errors.Is(err, ErrWriteNotSupported) {
-		t.Errorf("got %v, want ErrWriteNotSupported", err)
+func TestWriteFile_RoundTrip(t *testing.T) {
+	ident := buildVorbisIdent()
+	comment := buildVorbisComment("orig-vendor", [2]string{"TITLE", "First"})
+	// Audio page that follows the comment.
+	audio := buildPage(7, 2, 0, []byte("\x00\x00\x00\x00fake audio packet"))
+
+	stream := buildPage(7, 0, 0x02, ident)
+	stream = append(stream, buildPage(7, 1, 0, comment)...)
+	stream = append(stream, audio...)
+
+	p := writeOggTemp(t, stream)
+	f, err := ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
 	}
+	f.Comments.Set("TITLE", "Second")
+	f.Comments.Set("ARTIST", "Someone")
+	if err := f.WriteFile(p); err != nil {
+		t.Fatal(err)
+	}
+	g, err := ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.Title() != "Second" || g.Artist() != "Someone" {
+		t.Errorf("after write: Title=%q Artist=%q", g.Title(), g.Artist())
+	}
+	// Audio page should still be present at the end of the
+	// file (we can't readily decode it but we can search for
+	// our distinctive marker bytes).
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(raw, []byte("fake audio packet")) {
+		t.Errorf("audio packet body lost after WriteFile")
+	}
+}
+
+func TestWriteFile_PageCountChange(t *testing.T) {
+	// Build a comment with a small payload, then grow it
+	// beyond one page on rewrite. The subsequent audio page's
+	// sequence number must be shifted and its CRC recomputed
+	// so Read continues to succeed.
+	ident := buildVorbisIdent()
+	comment := buildVorbisComment("v", [2]string{"TITLE", "x"})
+	audio := buildPage(99, 2, 0, []byte("\x00\x00\x00\x00audio"))
+
+	stream := buildPage(99, 0, 0x02, ident)
+	stream = append(stream, buildPage(99, 1, 0, comment)...)
+	stream = append(stream, audio...)
+
+	p := writeOggTemp(t, stream)
+	f, err := ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Inflate the comment to span two pages: 60 KiB > 65025 max
+	// per page minus headers, so two pages required.
+	big := string(bytes.Repeat([]byte("X"), 70000))
+	f.Comments.Set("TITLE", big)
+	if err := f.WriteFile(p); err != nil {
+		t.Fatal(err)
+	}
+	g, err := ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.Title() != big {
+		t.Errorf("Title mismatch after multi-page comment write (got %d chars, want %d)", len(g.Title()), len(big))
+	}
+}
+
+func writeOggTemp(t *testing.T, body []byte) string {
+	t.Helper()
+	p := tempPath(t, "x.ogg")
+	if err := os.WriteFile(p, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func tempPath(t *testing.T, name string) string {
+	t.Helper()
+	return t.TempDir() + "/" + name
 }

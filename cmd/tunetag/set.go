@@ -8,9 +8,11 @@ import (
 	"github.com/cabbagekobe/tunetag/aac"
 	"github.com/cabbagekobe/tunetag/aiff"
 	"github.com/cabbagekobe/tunetag/ape"
+	"github.com/cabbagekobe/tunetag/asf"
 	"github.com/cabbagekobe/tunetag/flac"
 	"github.com/cabbagekobe/tunetag/id3v2"
 	"github.com/cabbagekobe/tunetag/mp4"
+	"github.com/cabbagekobe/tunetag/ogg"
 	"github.com/cabbagekobe/tunetag/wav"
 )
 
@@ -57,6 +59,10 @@ func cmdSet(args []string) error {
 		return setAPE(path, &sf)
 	case tunetag.FormatAAC:
 		return setAAC(path, &sf)
+	case tunetag.FormatASF:
+		return setASF(path, &sf)
+	case tunetag.FormatOgg:
+		return setOgg(path, &sf)
 	}
 	return fmt.Errorf("set: unsupported format %s", format)
 }
@@ -235,6 +241,98 @@ func setAPE(path string, sf *setFlags) error {
 		_ = t.Set(ape.KeyComment, sf.comment)
 	}
 	return t.WriteFile(path)
+}
+
+func setOgg(path string, sf *setFlags) error {
+	f, err := ogg.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if f.Comments == nil {
+		return fmt.Errorf("ogg: file has no comment block to update")
+	}
+	if sf.title != "" {
+		f.Comments.Set(ogg.FieldTitle, sf.title)
+	}
+	if sf.artist != "" {
+		f.Comments.Set(ogg.FieldArtist, sf.artist)
+	}
+	if sf.album != "" {
+		f.Comments.Set(ogg.FieldAlbum, sf.album)
+	}
+	if sf.year != "" {
+		f.Comments.Set(ogg.FieldDate, sf.year)
+	}
+	if sf.genre != "" {
+		f.Comments.Set(ogg.FieldGenre, sf.genre)
+	}
+	if sf.composer != "" {
+		f.Comments.Set(ogg.FieldComposer, sf.composer)
+	}
+	if sf.track != "" {
+		f.Comments.Set(ogg.FieldTrack, sf.track)
+	}
+	if sf.disc != "" {
+		f.Comments.Set(ogg.FieldDisc, sf.disc)
+	}
+	if sf.comment != "" {
+		f.Comments.Set(ogg.FieldDescription, sf.comment)
+	}
+	return f.WriteFile(path)
+}
+
+func setASF(path string, sf *setFlags) error {
+	f, err := asf.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if sf.title != "" {
+		f.Title = sf.title
+	}
+	if sf.artist != "" {
+		f.SetArtist(sf.artist) // CDO Author
+	}
+	if sf.album != "" {
+		f.SetAlbum(sf.album)
+	}
+	if sf.year != "" {
+		// Accept both "YYYY" and arbitrary "YYYY-MM-DD" strings.
+		y := 0
+		for _, c := range sf.year {
+			if c < '0' || c > '9' {
+				break
+			}
+			y = y*10 + int(c-'0')
+			if y > 99999 {
+				y = 0
+				break
+			}
+		}
+		if y != 0 {
+			f.SetYear(y)
+		} else {
+			// fall back to literal storage
+			f.SetExt(asf.NameYear, sf.year)
+		}
+	}
+	if sf.genre != "" {
+		f.SetGenre(sf.genre)
+	}
+	if sf.composer != "" {
+		f.SetComposer(sf.composer)
+	}
+	if sf.track != "" {
+		n, total := parseSlash(sf.track)
+		f.SetTrackNumber(int(n), int(total))
+	}
+	if sf.disc != "" {
+		n, total := parseSlash(sf.disc)
+		f.SetDiscNumber(int(n), int(total))
+	}
+	if sf.comment != "" {
+		f.Description = sf.comment
+	}
+	return f.WriteFile(path)
 }
 
 func setAAC(path string, sf *setFlags) error {

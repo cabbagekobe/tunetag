@@ -50,6 +50,14 @@ func (p *Picture) Encode() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// ParsePicture decodes a FLAC METADATA_BLOCK_PICTURE body into a
+// *Picture. Exposed for callers outside FLAC (notably the ogg
+// package, where Vorbis Comment's METADATA_BLOCK_PICTURE entries
+// contain the same byte layout, base64-encoded).
+func ParsePicture(body []byte) (*Picture, error) {
+	return parsePicture(body)
+}
+
 func parsePicture(body []byte) (*Picture, error) {
 	if len(body) < 32 {
 		return nil, errors.New("flac: PICTURE block truncated")

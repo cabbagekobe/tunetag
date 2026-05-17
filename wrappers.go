@@ -6,6 +6,7 @@ import (
 	"github.com/cabbagekobe/tunetag/aac"
 	"github.com/cabbagekobe/tunetag/aiff"
 	"github.com/cabbagekobe/tunetag/ape"
+	"github.com/cabbagekobe/tunetag/asf"
 	"github.com/cabbagekobe/tunetag/flac"
 	"github.com/cabbagekobe/tunetag/id3v1"
 	"github.com/cabbagekobe/tunetag/id3v2"
@@ -315,10 +316,10 @@ func (a *aiffTag) Pictures() []Picture {
 	return wrapPictureFrames(a.f.Pictures())
 }
 
-// oggTag adapts *ogg.File to the read-only Tag interface. Ogg
-// has no embedded pictures via Vorbis Comment (the
-// METADATA_BLOCK_PICTURE convention is FLAC-specific in this
-// codebase) so Pictures always returns nil.
+// oggTag adapts *ogg.File to the read-only Tag interface.
+// Vorbis Comment carries cover art via METADATA_BLOCK_PICTURE
+// (base64 of a FLAC PICTURE block); the ogg package decodes
+// those into *flac.Picture which this wrapper converts.
 type oggTag struct{ f *ogg.File }
 
 func (o *oggTag) Title() string               { return o.f.Title() }
@@ -331,8 +332,21 @@ func (o *oggTag) Year() int                   { return o.f.Year() }
 func (o *oggTag) Comment() string             { return o.f.Comment() }
 func (o *oggTag) TrackNumber() (n, total int) { return o.f.TrackNumber() }
 func (o *oggTag) DiscNumber() (n, total int)  { return o.f.DiscNumber() }
-func (o *oggTag) Pictures() []Picture         { return nil }
 func (o *oggTag) Format() Format              { return FormatOgg }
+
+func (o *oggTag) Pictures() []Picture {
+	pics := o.f.Pictures()
+	out := make([]Picture, 0, len(pics))
+	for _, p := range pics {
+		out = append(out, Picture{
+			MIME:        p.MIME,
+			Type:        PictureType(p.PictureType),
+			Description: p.Description,
+			Data:        p.Data,
+		})
+	}
+	return out
+}
 
 // apeTag adapts *ape.Tag to the read-only Tag interface.
 type apeTag struct{ t *ape.Tag }
@@ -347,8 +361,24 @@ func (a *apeTag) Year() int                   { return a.t.Year() }
 func (a *apeTag) Comment() string             { return a.t.Comment() }
 func (a *apeTag) TrackNumber() (n, total int) { return a.t.TrackNumber() }
 func (a *apeTag) DiscNumber() (n, total int)  { return a.t.DiscNumber() }
-func (a *apeTag) Pictures() []Picture         { return nil }
 func (a *apeTag) Format() Format              { return FormatAPE }
+
+func (a *apeTag) Pictures() []Picture {
+	pics := a.t.Pictures()
+	out := make([]Picture, 0, len(pics))
+	for _, p := range pics {
+		// APEv2 doesn't carry MIME; sniff a sensible value from
+		// the image data so consumers can route to JPG vs PNG
+		// decoders without re-parsing the bytes.
+		out = append(out, Picture{
+			MIME:        SniffImageMIME(p.Data),
+			Type:        PictureCoverFront,
+			Description: p.Filename,
+			Data:        p.Data,
+		})
+	}
+	return out
+}
 
 // aacTag adapts *aac.File to the read-only Tag interface.
 type aacTag struct{ f *aac.File }
@@ -385,6 +415,35 @@ func wrapPictureFrames(frames []*id3v2.PictureFrame) []Picture {
 	return out
 }
 
+// asfTag adapts *asf.File to the read-only Tag interface.
+type asfTag struct{ f *asf.File }
+
+func (a *asfTag) Title() string               { return a.f.Title }
+func (a *asfTag) Artist() string              { return a.f.Artist() }
+func (a *asfTag) AlbumArtist() string         { return a.f.AlbumArtist() }
+func (a *asfTag) Album() string               { return a.f.Album() }
+func (a *asfTag) Composer() string            { return a.f.Composer() }
+func (a *asfTag) Genre() string               { return a.f.Genre() }
+func (a *asfTag) Year() int                   { return a.f.Year() }
+func (a *asfTag) Comment() string             { return a.f.Comment() }
+func (a *asfTag) TrackNumber() (n, total int) { return a.f.TrackNumber() }
+func (a *asfTag) DiscNumber() (n, total int)  { return a.f.DiscNumber() }
+func (a *asfTag) Format() Format              { return FormatASF }
+
+func (a *asfTag) Pictures() []Picture {
+	pics := a.f.Pictures()
+	out := make([]Picture, 0, len(pics))
+	for _, p := range pics {
+		out = append(out, Picture{
+			MIME:        p.MIME,
+			Type:        PictureType(p.Type),
+			Description: p.Description,
+			Data:        p.Data,
+		})
+	}
+	return out
+}
+
 // Compile-time check that the wrappers all satisfy Tag.
 var (
 	_ Tag = (*mp3Tag)(nil)
@@ -395,4 +454,5 @@ var (
 	_ Tag = (*oggTag)(nil)
 	_ Tag = (*apeTag)(nil)
 	_ Tag = (*aacTag)(nil)
+	_ Tag = (*asfTag)(nil)
 )

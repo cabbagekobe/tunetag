@@ -14,6 +14,7 @@ const (
 	FormatOgg
 	FormatAPE
 	FormatAAC
+	FormatASF
 )
 
 func (f Format) String() string {
@@ -36,6 +37,8 @@ func (f Format) String() string {
 		return "APEv2"
 	case FormatAAC:
 		return "AAC"
+	case FormatASF:
+		return "ASF"
 	default:
 		return "Unknown"
 	}

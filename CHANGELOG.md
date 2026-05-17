@@ -56,8 +56,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   new `ogg` package) can decode Vorbis Comment blocks without
   duplicating the format.
 - CLI: `tunetag print / dump / set / strip / cover` now accept
-  `.wav`, `.aif` / `.aiff` / `.aifc`, `.ogg` / `.opus` (read
-  paths only), `.ape` / `.wv`, and `.aac` paths.
+  `.wav`, `.aif` / `.aiff` / `.aifc`, `.ogg` / `.opus`,
+  `.ape` / `.wv`, `.aac`, and `.wma` / `.wmv` paths.
+- ASF / WMA support via the new `asf` subpackage. Both the
+  Content Description Object (Title / Author / Copyright /
+  Description / Rating) and the Extended Content Description
+  Object (WM/AlbumTitle, WM/Year, WM/TrackNumber, WM/Genre,
+  WM/AlbumArtist, WM/Composer, WM/PartOfSet, WM/Picture, …)
+  round-trip in full. All other Header child objects (File
+  Properties, Stream Properties, Header Extension, Codec List,
+  …) plus the Data + Index objects are preserved
+  byte-for-byte. WM/Picture cover art has decode + encode
+  helpers via `asf.Picture`. UTF-16LE encoding is handled
+  internally; callers see Go-native UTF-8 strings. New
+  top-level entries `tunetag.FormatASF` and
+  `tunetag.OpenASF`. `Detect` matches the 16-byte ASF Header
+  Object GUID at offset 0; `Detect` now reads a 16-byte sniff
+  buffer (was 12) so any input < 12 bytes still hits
+  `ErrFileTooSmall`.
+- Ogg now supports writing. `ogg.File.WriteFile` re-encodes the
+  Vorbis Comment block (Vorbis: framed with `0x03 "vorbis"` +
+  framing bit; Opus: framed with `"OpusTags"`), splits the
+  result into one or more Ogg pages, and rewrites every
+  subsequent page of the same logical bitstream with shifted
+  sequence numbers and freshly-computed Ogg CRC-32 values.
+  Concurrently-multiplexed streams pass through unchanged.
+  Strip on Ogg now empties the Comments list (rather than
+  returning ErrWriteNotSupported), preserving the codec's
+  default vendor string. Intermediate pages of a multi-page
+  comment packet correctly stamp `granule_position = -1` per
+  the Ogg spec ("no packet ends on this page").
+- Ogg cover art via `METADATA_BLOCK_PICTURE`: `ogg.File`
+  exposes `Pictures()`, `AddPicture(*flac.Picture)`, and
+  `RemovePictures()`. The on-disk format is base64-encoded
+  FLAC PICTURE block bytes — shared with the `flac`
+  subpackage, which now exports `ParsePicture` for that
+  purpose.
+- APEv2 cover art via "Cover Art (Front)" / "Cover Art (Back)"
+  / "Cover Art (Other)" binary items. `ape.Tag` exposes
+  `Pictures()`, `AddPicture(*Picture)`, `AddPictureAs(key, p)`,
+  and `RemovePictures()`. The wire format is the standard
+  `<filename>\x00<image bytes>` layout used by foobar2000 and
+  MusicBrainz Picard.
+- CLI `cover --set` now accepts `.ogg` / `.opus`, `.ape` /
+  `.wv`, in addition to the previously-supported MP3, FLAC,
+  MP4, WAV, AIFF, AAC, and WMA.
+
+### Fixed
+
+- `asf.File.SetArtist` no longer leaves the file's Artist field
+  out of sync: `Artist()` now reads Content Description Object
+  Author first (which `SetArtist` writes to), falling back to
+  WM/AlbumArtist only when Author is empty. The previous
+  ordering caused a round-trip bug where `SetArtist("X")` could
+  appear to have no effect if WM/AlbumArtist was already
+  populated.
 
 ## [0.1.2] - 2026-05-16
 
