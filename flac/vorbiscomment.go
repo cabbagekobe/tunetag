@@ -52,6 +52,17 @@ func (vc *VorbisComment) Encode() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// ParseVorbisComment decodes a Vorbis Comment block body
+// (vendor length + vendor + comment count + length-prefixed
+// "KEY=value" entries) into a VorbisComment. The on-disk format
+// is identical to the one used by Ogg Vorbis and Ogg Opus comment
+// packets, so callers outside FLAC can reuse this parser by
+// passing the body after stripping any codec-specific magic
+// prefix (and Vorbis's trailing framing bit, if present).
+func ParseVorbisComment(body []byte) (*VorbisComment, error) {
+	return parseVorbisComment(body)
+}
+
 func parseVorbisComment(body []byte) (*VorbisComment, error) {
 	if len(body) < 4 {
 		return nil, errors.New("flac: VORBIS_COMMENT truncated before vendor length")

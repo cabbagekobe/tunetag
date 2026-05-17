@@ -2,16 +2,20 @@ package tunetag
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/cabbagekobe/tunetag/ape"
+	"github.com/cabbagekobe/tunetag/asf"
 	"github.com/cabbagekobe/tunetag/flac"
 	"github.com/cabbagekobe/tunetag/id3v1"
 	"github.com/cabbagekobe/tunetag/id3v2"
 	"github.com/cabbagekobe/tunetag/internal/mp4test"
+	"github.com/cabbagekobe/tunetag/wav"
 )
 
 // --- helpers ---------------------------------------------------
@@ -59,6 +63,27 @@ func buildFLACFile(t *testing.T, blocks []flac.Block, audio []byte) []byte {
 	return buf.Bytes()
 }
 
+// buildWAVFile composes a minimal RIFF/WAVE file with the given
+// inner payload (chunks after the "WAVE" type tag).
+func buildWAVFile(payload []byte) []byte {
+	var out bytes.Buffer
+	out.WriteString("RIFF")
+	_ = binary.Write(&out, binary.LittleEndian, uint32(len(payload)+4))
+	out.WriteString("WAVE")
+	out.Write(payload)
+	return out.Bytes()
+}
+
+// putWAVChunk appends one RIFF chunk to buf.
+func putWAVChunk(buf *bytes.Buffer, id string, body []byte) {
+	buf.WriteString(id)
+	_ = binary.Write(buf, binary.LittleEndian, uint32(len(body)))
+	buf.Write(body)
+	if len(body)%2 == 1 {
+		buf.WriteByte(0)
+	}
+}
+
 // --- Detect ----------------------------------------------------
 
 func TestDetect_KnownFormats(t *testing.T) {
@@ -70,6 +95,15 @@ func TestDetect_KnownFormats(t *testing.T) {
 		{"id3v2", []byte{'I', 'D', '3', 4, 0, 0, 0, 0, 0, 0}, FormatID3v2},
 		{"flac", []byte{'f', 'L', 'a', 'C', 0, 0, 0, 4, 'd', 'a', 't', 'a'}, FormatFLAC},
 		{"mp4", []byte{0, 0, 0, 8, 'f', 't', 'y', 'p'}, FormatMP4},
+		{"wav", []byte{'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'A', 'V', 'E'}, FormatWAV},
+		{"aiff", []byte{'F', 'O', 'R', 'M', 0, 0, 0, 0, 'A', 'I', 'F', 'F'}, FormatAIFF},
+		{"aifc", []byte{'F', 'O', 'R', 'M', 0, 0, 0, 0, 'A', 'I', 'F', 'C'}, FormatAIFF},
+		{"ogg", []byte{'O', 'g', 'g', 'S', 0, 0, 0, 0, 0, 0, 0, 0}, FormatOgg},
+		{"adts", []byte{0xFF, 0xF1, 0x50, 0x80, 0, 0, 0, 0, 0, 0, 0, 0}, FormatAAC},
+		{"asf", []byte{
+			0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11,
+			0xA6, 0xD9, 0x00, 0xAA, 0x00, 0x62, 0xCE, 0x6C,
+		}, FormatASF},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -294,6 +328,551 @@ func TestOpen_MP4(t *testing.T) {
 	}
 	if got.Album() != "Stars" {
 		t.Errorf("Album = %q", got.Album())
+	}
+}
+
+func TestOpen_WAV_LISTINFO(t *testing.T) {
+	// Body of a LIST chunk: "INFO" + sub-chunks.
+	var info bytes.Buffer
+	info.WriteString("INFO")
+	// INAM = "Wave Title"\0
+	v := append([]byte("Wave Title"), 0)
+	info.WriteString("INAM")
+	binary.Write(&info, binary.LittleEndian, uint32(len(v)))
+	info.Write(v)
+	if len(v)%2 == 1 {
+		info.WriteByte(0)
+	}
+	var pay bytes.Buffer
+	putWAVChunk(&pay, "fmt ", bytes.Repeat([]byte{0}, 16))
+	putWAVChunk(&pay, "LIST", info.Bytes())
+	putWAVChunk(&pay, "data", []byte("audio"))
+	p := writeFile(t, "x.wav", buildWAVFile(pay.Bytes()))
+
+	got, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Format() != FormatWAV {
+		t.Errorf("Format = %s", got.Format())
+	}
+	if got.Title() != "Wave Title" {
+		t.Errorf("Title = %q", got.Title())
+	}
+}
+
+func TestOpen_WAV_NoMetadataIsStillReadable(t *testing.T) {
+	// The user's primary complaint: WAV files with no tags at all
+	// were rejected as "unsupported". They must now Open
+	// successfully and return an empty tag instead.
+	var pay bytes.Buffer
+	putWAVChunk(&pay, "fmt ", bytes.Repeat([]byte{0}, 16))
+	putWAVChunk(&pay, "data", []byte("audio"))
+	p := writeFile(t, "bare.wav", buildWAVFile(pay.Bytes()))
+
+	tag, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tag.Format() != FormatWAV {
+		t.Errorf("Format = %s", tag.Format())
+	}
+	if tag.Title() != "" || tag.Artist() != "" {
+		t.Errorf("expected empty fields, got title=%q artist=%q", tag.Title(), tag.Artist())
+	}
+}
+
+func TestOpen_WAV_PrefersID3OverLISTINFO(t *testing.T) {
+	// Build ID3v2 body.
+	id3 := &id3v2.Tag{Version: id3v2.V24, Padding: 0}
+	id3.SetTitle("id3-wins")
+	var id3Body bytes.Buffer
+	id3.Encode(&id3Body)
+	// Build INFO body.
+	var info bytes.Buffer
+	info.WriteString("INFO")
+	v := append([]byte("list-loses"), 0)
+	info.WriteString("INAM")
+	binary.Write(&info, binary.LittleEndian, uint32(len(v)))
+	info.Write(v)
+
+	var pay bytes.Buffer
+	putWAVChunk(&pay, "LIST", info.Bytes())
+	putWAVChunk(&pay, "id3 ", id3Body.Bytes())
+	p := writeFile(t, "x.wav", buildWAVFile(pay.Bytes()))
+
+	got, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Title() != "id3-wins" {
+		t.Errorf("Title = %q, want id3-wins", got.Title())
+	}
+}
+
+func TestStrip_WAV(t *testing.T) {
+	var info bytes.Buffer
+	info.WriteString("INFO")
+	v := append([]byte("removeme"), 0)
+	info.WriteString("INAM")
+	binary.Write(&info, binary.LittleEndian, uint32(len(v)))
+	info.Write(v)
+
+	var pay bytes.Buffer
+	putWAVChunk(&pay, "fmt ", bytes.Repeat([]byte{0}, 16))
+	putWAVChunk(&pay, "LIST", info.Bytes())
+	putWAVChunk(&pay, "data", []byte("audio"))
+	p := writeFile(t, "x.wav", buildWAVFile(pay.Bytes()))
+
+	if err := Strip(p); err != nil {
+		t.Fatal(err)
+	}
+	got, err := wav.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Info) != 0 {
+		t.Errorf("Info after Strip = %+v, want empty", got.Info)
+	}
+	if got.ID3 != nil {
+		t.Errorf("ID3 after Strip = %+v, want nil", got.ID3)
+	}
+}
+
+func TestOpenWAV_NonexistentPath(t *testing.T) {
+	if _, err := OpenWAV("/nonexistent/x.wav"); err == nil {
+		t.Fatal("expected error opening missing WAV")
+	}
+}
+
+// --- AIFF ------------------------------------------------------
+
+// buildAIFFRaw composes a minimal FORM/AIFF blob with the given
+// inner chunk payload (chunks after the "AIFF" form-type tag).
+func buildAIFFRaw(formType string, payload []byte) []byte {
+	var out bytes.Buffer
+	out.WriteString("FORM")
+	_ = binary.Write(&out, binary.BigEndian, uint32(len(payload)+4))
+	out.WriteString(formType)
+	out.Write(payload)
+	return out.Bytes()
+}
+
+func putAIFFChunk(buf *bytes.Buffer, id string, body []byte) {
+	buf.WriteString(id)
+	_ = binary.Write(buf, binary.BigEndian, uint32(len(body)))
+	buf.Write(body)
+	if len(body)%2 == 1 {
+		buf.WriteByte(0)
+	}
+}
+
+func TestOpen_AIFF_TextChunks(t *testing.T) {
+	var pay bytes.Buffer
+	putAIFFChunk(&pay, "NAME", []byte("Aiff Title"))
+	putAIFFChunk(&pay, "AUTH", []byte("Aiff Author"))
+	p := writeFile(t, "x.aif", buildAIFFRaw("AIFF", pay.Bytes()))
+
+	got, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Format() != FormatAIFF {
+		t.Errorf("Format = %s", got.Format())
+	}
+	if got.Title() != "Aiff Title" || got.Artist() != "Aiff Author" {
+		t.Errorf("Title=%q Artist=%q", got.Title(), got.Artist())
+	}
+}
+
+func TestOpen_AIFF_EmptyIsStillReadable(t *testing.T) {
+	p := writeFile(t, "bare.aif", buildAIFFRaw("AIFF", nil))
+	got, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Format() != FormatAIFF {
+		t.Errorf("Format = %s", got.Format())
+	}
+}
+
+func TestStrip_AIFF(t *testing.T) {
+	var pay bytes.Buffer
+	putAIFFChunk(&pay, "NAME", []byte("byebye"))
+	putAIFFChunk(&pay, "SSND", []byte("audio"))
+	p := writeFile(t, "x.aif", buildAIFFRaw("AIFF", pay.Bytes()))
+	if err := Strip(p); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Title() != "" {
+		t.Errorf("Title = %q, want empty after strip", got.Title())
+	}
+}
+
+// --- Ogg -------------------------------------------------------
+
+func TestOpen_Ogg_Vorbis(t *testing.T) {
+	// We rely on the ogg package's own test builders by
+	// duplicating the wire format here, since it's the only
+	// shared bytes we need.
+	vc := &flac.VorbisComment{Vendor: "X", Comments: []string{"TITLE=OggTitle", "ARTIST=OggArtist"}}
+	cbody, _ := vc.Encode()
+	commentPkt := append([]byte{0x03}, []byte("vorbis")...)
+	commentPkt = append(commentPkt, cbody...)
+	commentPkt = append(commentPkt, 0x01) // framing bit
+
+	identPkt := append([]byte{0x01}, []byte("vorbis")...)
+	identPkt = append(identPkt, make([]byte, 23)...)
+
+	stream := makeOggPage(7, 0, 0x02, identPkt)
+	stream = append(stream, makeOggPage(7, 1, 0, commentPkt)...)
+	p := writeFile(t, "x.ogg", stream)
+
+	got, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Format() != FormatOgg {
+		t.Errorf("Format = %s", got.Format())
+	}
+	if got.Title() != "OggTitle" || got.Artist() != "OggArtist" {
+		t.Errorf("Title=%q Artist=%q", got.Title(), got.Artist())
+	}
+}
+
+func makeOggPage(serial, seq uint32, flags byte, packets ...[]byte) []byte {
+	var segs []byte
+	var body bytes.Buffer
+	for _, pkt := range packets {
+		n := len(pkt)
+		for n >= 255 {
+			segs = append(segs, 255)
+			n -= 255
+		}
+		segs = append(segs, byte(n))
+		body.Write(pkt)
+	}
+	var out bytes.Buffer
+	out.WriteString("OggS")
+	out.WriteByte(0)
+	out.WriteByte(flags)
+	out.Write(make([]byte, 8))
+	binary.Write(&out, binary.LittleEndian, serial)
+	binary.Write(&out, binary.LittleEndian, seq)
+	binary.Write(&out, binary.LittleEndian, uint32(0))
+	out.WriteByte(byte(len(segs)))
+	out.Write(segs)
+	out.Write(body.Bytes())
+	return out.Bytes()
+}
+
+// --- APE -------------------------------------------------------
+
+func TestOpen_APE(t *testing.T) {
+	tag := &ape.Tag{HasHeader: true}
+	tag.Set("Title", "Ape Title")
+	tag.Set("Artist", "Ape Artist")
+	body, err := tag.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	full := append([]byte("FAKE_WAVPACK_AUDIO"), body...)
+	p := writeFile(t, "x.wv", full)
+
+	got, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Format() != FormatAPE {
+		t.Errorf("Format = %s", got.Format())
+	}
+	if got.Title() != "Ape Title" || got.Artist() != "Ape Artist" {
+		t.Errorf("Title=%q Artist=%q", got.Title(), got.Artist())
+	}
+}
+
+func TestStrip_APE(t *testing.T) {
+	tag := &ape.Tag{HasHeader: true}
+	tag.Set("Title", "byebye")
+	body, _ := tag.Encode()
+	audio := []byte("audio_kept")
+	p := writeFile(t, "x.ape", append(append([]byte{}, audio...), body...))
+
+	if err := Strip(p); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// After strip the tag is empty (zero items) but the footer
+	// still exists. The audio prefix must still be there.
+	if !bytes.HasPrefix(got, audio) {
+		t.Errorf("audio body not preserved after Strip")
+	}
+}
+
+// --- AAC -------------------------------------------------------
+
+func TestOpen_AAC_BareADTS(t *testing.T) {
+	// Untagged raw ADTS — should resolve as FormatAAC with
+	// empty fields rather than failing.
+	body := append([]byte{0xFF, 0xF1, 0x50, 0x80}, make([]byte, 32)...)
+	p := writeFile(t, "bare.aac", body)
+	got, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Format() != FormatAAC {
+		t.Errorf("Format = %s", got.Format())
+	}
+	if got.Title() != "" {
+		t.Errorf("Title = %q, want empty", got.Title())
+	}
+}
+
+// --- Pictures exposed via tunetag.Open -------------------------
+
+func TestOpen_OggPicture(t *testing.T) {
+	// Build an Ogg file via the package's own test helpers, add a
+	// cover via the public ogg API, then verify the top-level
+	// Tag.Pictures() forwards it correctly.
+	vc := &flac.VorbisComment{Vendor: "v", Comments: []string{"TITLE=Cover"}}
+	cbody, _ := vc.Encode()
+	commentPkt := append([]byte{0x03}, []byte("vorbis")...)
+	commentPkt = append(commentPkt, cbody...)
+	commentPkt = append(commentPkt, 0x01) // framing bit
+
+	identPkt := append([]byte{0x01}, []byte("vorbis")...)
+	identPkt = append(identPkt, make([]byte, 23)...)
+	stream := makeOggPage(7, 0, 0x02, identPkt)
+	stream = append(stream, makeOggPage(7, 1, 0, commentPkt)...)
+	stream = append(stream, makeOggPage(7, 2, 0, []byte{0, 0, 0, 0, 0x42, 0x43})...)
+	p := writeFile(t, "x.ogg", stream)
+
+	o, err := OpenOgg(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pic := &flac.Picture{
+		PictureType: 3,
+		MIME:        "image/jpeg",
+		Description: "front",
+		Data:        []byte{0xFF, 0xD8, 0xFF, 0xE0, 0xAB, 0xCD},
+	}
+	if err := o.AddPicture(pic); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.WriteFile(p); err != nil {
+		t.Fatal(err)
+	}
+
+	tag, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pics := tag.Pictures()
+	if len(pics) != 1 {
+		t.Fatalf("Pictures via Tag interface = %d, want 1", len(pics))
+	}
+	got := pics[0]
+	if got.MIME != "image/jpeg" || got.Description != "front" || !bytes.Equal(got.Data, pic.Data) {
+		t.Errorf("picture mismatch via Tag interface: %+v", got)
+	}
+}
+
+func TestOpen_APEPicture(t *testing.T) {
+	tag := &ape.Tag{HasHeader: true}
+	tag.Set("Title", "x")
+	pic := &ape.Picture{Filename: "cover.jpg", Data: []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x10, 0x20}}
+	if err := tag.AddPicture(pic); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := tag.Encode()
+	full := append([]byte("AUDIO_BODY"), body...)
+	p := writeFile(t, "x.ape", full)
+
+	common, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pics := common.Pictures()
+	if len(pics) != 1 {
+		t.Fatalf("Pictures via Tag interface = %d, want 1", len(pics))
+	}
+	got := pics[0]
+	// MIME is sniffed from the bytes since APE doesn't carry it.
+	if got.MIME != "image/jpeg" {
+		t.Errorf("sniffed MIME = %q, want image/jpeg", got.MIME)
+	}
+	if got.Description != "cover.jpg" {
+		t.Errorf("Description = %q, want %q (Filename)", got.Description, "cover.jpg")
+	}
+	if !bytes.Equal(got.Data, pic.Data) {
+		t.Errorf("data mismatch")
+	}
+}
+
+func TestSniffImageMIME(t *testing.T) {
+	cases := []struct {
+		body []byte
+		want string
+	}{
+		{[]byte{0xFF, 0xD8, 0xFF, 0xE0}, "image/jpeg"},
+		{[]byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}, "image/png"},
+		{[]byte("GIF89a..."), "image/gif"},
+		{[]byte("GIF87a..."), "image/gif"},
+		{[]byte{0x42, 0x4D, 0x10, 0x00}, "image/bmp"},
+		{[]byte("not an image"), ""},
+		{nil, ""},
+	}
+	for _, c := range cases {
+		if got := SniffImageMIME(c.body); got != c.want {
+			t.Errorf("SniffImageMIME(% X) = %q, want %q", c.body, got, c.want)
+		}
+	}
+}
+
+// --- ASF / WMA -------------------------------------------------
+
+func TestOpen_ASF(t *testing.T) {
+	// Build a minimal ASF file with a CDO and an ECDO. We rely
+	// on the asf package's exported writers indirectly by
+	// constructing a *asf.File and calling WriteFile.
+	src := &asf.File{
+		Title:  "WMA Title",
+		Author: "WMA Author",
+	}
+	src.SetAlbum("Best of 2026")
+	src.SetYear(2026)
+	src.SetTrackNumber(4, 10)
+	// Build a real path so WriteFile can be called.
+	p := filepath.Join(t.TempDir(), "x.wma")
+	// Initialise an empty file with just the magic Header
+	// object + a Data Object, so asf.ReadFile can be used as
+	// the foundation. Easiest: ask asf to round-trip a minimal
+	// in-memory file by writing once.
+	if err := os.WriteFile(p, buildEmptyASF(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Read what we just wrote, copy our state across, write.
+	scaffold, err := asf.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scaffold.Title = src.Title
+	scaffold.Author = src.Author
+	for _, d := range src.Extended {
+		scaffold.Extended = append(scaffold.Extended, d)
+	}
+	if err := scaffold.WriteFile(p); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Format() != FormatASF {
+		t.Errorf("Format = %s", got.Format())
+	}
+	if got.Title() != "WMA Title" || got.Artist() != "WMA Author" {
+		t.Errorf("Title=%q Artist=%q", got.Title(), got.Artist())
+	}
+	if got.Album() != "Best of 2026" || got.Year() != 2026 {
+		t.Errorf("Album=%q Year=%d", got.Album(), got.Year())
+	}
+	if n, total := got.TrackNumber(); n != 4 || total != 10 {
+		t.Errorf("Track = %d/%d", n, total)
+	}
+}
+
+// buildEmptyASF builds the smallest valid ASF file: just the
+// Header Object containing no children, followed by a Data
+// Object containing one byte. Used as a scaffold by the test
+// above.
+func buildEmptyASF() []byte {
+	// Header Object: GUID + size(8) + count(4) + reserved(2).
+	const headerObjBodyLen = 4 + 2 // count + reserved
+	hdrGUID := []byte{
+		0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11,
+		0xA6, 0xD9, 0x00, 0xAA, 0x00, 0x62, 0xCE, 0x6C,
+	}
+	dataGUID := []byte{
+		0x36, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11,
+		0xA6, 0xD9, 0x00, 0xAA, 0x00, 0x62, 0xCE, 0x6C,
+	}
+	var buf bytes.Buffer
+	buf.Write(hdrGUID)
+	sz := make([]byte, 8)
+	binary.LittleEndian.PutUint64(sz, 24+headerObjBodyLen)
+	buf.Write(sz)
+	cnt := make([]byte, 4)
+	binary.LittleEndian.PutUint32(cnt, 0)
+	buf.Write(cnt)
+	buf.WriteByte(0x01)
+	buf.WriteByte(0x02)
+	// Data Object with a single byte payload.
+	buf.Write(dataGUID)
+	binary.LittleEndian.PutUint64(sz, 24+1)
+	buf.Write(sz)
+	buf.WriteByte(0x00)
+	return buf.Bytes()
+}
+
+func TestStrip_ASF(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "x.wma")
+	if err := os.WriteFile(p, buildEmptyASF(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scaffold, err := asf.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scaffold.Title = "to be stripped"
+	scaffold.SetAlbum("also stripped")
+	if err := scaffold.WriteFile(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := Strip(p); err != nil {
+		t.Fatal(err)
+	}
+	tag, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tag.Title() != "" || tag.Album() != "" {
+		t.Errorf("after Strip: Title=%q Album=%q", tag.Title(), tag.Album())
+	}
+}
+
+func TestOpenASF_NonexistentPath(t *testing.T) {
+	if _, err := OpenASF("/nonexistent/x.wma"); err == nil {
+		t.Fatal("expected error opening missing ASF")
+	}
+}
+
+func TestOpen_AAC_WithLeadingID3v2(t *testing.T) {
+	tag := &id3v2.Tag{Version: id3v2.V24, Padding: 0}
+	tag.SetTitle("AAC w/ ID3")
+	var buf bytes.Buffer
+	tag.Encode(&buf)
+	buf.Write([]byte{0xFF, 0xF1, 0x50, 0x80})
+	buf.Write(make([]byte, 32))
+	p := writeFile(t, "x.aac", buf.Bytes())
+
+	got, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Note: the ID3v2 prefix means Detect classifies this as
+	// FormatID3v2, not FormatAAC. Both routes expose the same
+	// title, so the user-visible behaviour is identical.
+	if got.Title() != "AAC w/ ID3" {
+		t.Errorf("Title = %q", got.Title())
 	}
 }
 

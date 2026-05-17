@@ -30,13 +30,14 @@ func parseSlash(s string) (n, total int) {
 	return n, 0
 }
 
-// guessMIME sniffs the image MIME type from JPEG / PNG magic bytes.
+// guessMIME sniffs the image MIME type from common magic bytes,
+// falling back to a generic octet-stream string when the bytes
+// don't match any recognised image format. Delegates to
+// [tunetag.SniffImageMIME] for the actual detection so the CLI
+// and the library stay in lockstep.
 func guessMIME(data []byte) string {
-	switch {
-	case len(data) >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF:
-		return "image/jpeg"
-	case len(data) >= 8 && string(data[0:8]) == "\x89PNG\r\n\x1a\n":
-		return "image/png"
+	if mime := tunetag.SniffImageMIME(data); mime != "" {
+		return mime
 	}
 	return "application/octet-stream"
 }

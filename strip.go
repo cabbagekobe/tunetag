@@ -4,10 +4,16 @@ import (
 	"errors"
 	"os"
 
+	"github.com/cabbagekobe/tunetag/aac"
+	"github.com/cabbagekobe/tunetag/aiff"
+	"github.com/cabbagekobe/tunetag/ape"
+	"github.com/cabbagekobe/tunetag/asf"
 	"github.com/cabbagekobe/tunetag/flac"
 	"github.com/cabbagekobe/tunetag/id3v1"
 	"github.com/cabbagekobe/tunetag/id3v2"
 	"github.com/cabbagekobe/tunetag/mp4"
+	"github.com/cabbagekobe/tunetag/ogg"
+	"github.com/cabbagekobe/tunetag/wav"
 )
 
 // Strip removes every metadata block at path, leaving the audio
@@ -34,6 +40,18 @@ func Strip(path string) error {
 		return stripFLAC(path)
 	case FormatMP4:
 		return stripMP4(path)
+	case FormatWAV:
+		return stripWAV(path)
+	case FormatAIFF:
+		return stripAIFF(path)
+	case FormatOgg:
+		return stripOgg(path)
+	case FormatAPE:
+		return stripAPE(path)
+	case FormatAAC:
+		return stripAAC(path)
+	case FormatASF:
+		return stripASF(path)
 	}
 	return ErrUnknownFormat
 }
@@ -74,5 +92,71 @@ func stripMP4(path string) error {
 		return err
 	}
 	src.Tag.Items = nil
+	return src.WriteFile(path)
+}
+
+func stripWAV(path string) error {
+	src, err := wav.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	src.Info = nil
+	src.ID3 = nil
+	return src.WriteFile(path)
+}
+
+func stripOgg(path string) error {
+	src, err := ogg.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	// Empty the Vorbis Comment block while keeping the
+	// codec-default vendor string, which is required by the
+	// Vorbis / Opus specs.
+	src.Comments.Comments = nil
+	return src.WriteFile(path)
+}
+
+func stripAIFF(path string) error {
+	src, err := aiff.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	src.Text = nil
+	src.Annotations = nil
+	src.ID3 = nil
+	return src.WriteFile(path)
+}
+
+func stripAPE(path string) error {
+	src, err := ape.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	src.Items = nil
+	return src.WriteFile(path)
+}
+
+func stripAAC(path string) error {
+	src, err := aac.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	src.V2 = nil
+	src.V1 = nil
+	return src.WriteFile(path)
+}
+
+func stripASF(path string) error {
+	src, err := asf.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	src.Title = ""
+	src.Author = ""
+	src.Copyright = ""
+	src.Description = ""
+	src.Rating = ""
+	src.Extended = nil
 	return src.WriteFile(path)
 }

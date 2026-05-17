@@ -9,6 +9,12 @@ const (
 	FormatID3v2
 	FormatFLAC
 	FormatMP4
+	FormatWAV
+	FormatAIFF
+	FormatOgg
+	FormatAPE
+	FormatAAC
+	FormatASF
 )
 
 func (f Format) String() string {
@@ -21,6 +27,18 @@ func (f Format) String() string {
 		return "FLAC"
 	case FormatMP4:
 		return "MP4"
+	case FormatWAV:
+		return "WAV"
+	case FormatAIFF:
+		return "AIFF"
+	case FormatOgg:
+		return "Ogg"
+	case FormatAPE:
+		return "APEv2"
+	case FormatAAC:
+		return "AAC"
+	case FormatASF:
+		return "ASF"
 	default:
 		return "Unknown"
 	}
