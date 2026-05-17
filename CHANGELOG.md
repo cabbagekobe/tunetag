@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-05-17
+
 ### Added
 
 - WAV (RIFF/WAVE) support via the new `wav` subpackage. Both
@@ -111,6 +113,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ordering caused a round-trip bug where `SetArtist("X")` could
   appear to have no effect if WM/AlbumArtist was already
   populated.
+- WAV and AIFF readers reject chunks whose declared size exceeds
+  the remaining file instead of attempting a multi-GiB
+  allocation up front. APEv2 `parseItems` caps the initial
+  `[]Item` capacity by the body's physical maximum so a footer
+  claiming `count = 4 GiB` no longer triggers a giant
+  allocation. ASF refuses child objects whose declared size
+  overflows int64 (would previously panic inside `make`).
 
 ## [0.1.2] - 2026-05-16
 
