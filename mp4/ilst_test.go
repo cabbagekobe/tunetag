@@ -72,6 +72,77 @@ func TestIlst_SetNilRemoves(t *testing.T) {
 	}
 }
 
+func TestIlst_SetFreeform_AddsAndUpdates(t *testing.T) {
+	l := &Ilst{}
+	l.SetFreeform("com.apple.iTunes", "initialkey", makeUTF8Data("8A"))
+	got := l.FirstFreeform("com.apple.iTunes", "initialkey")
+	if got == nil || got.String() != "8A" {
+		t.Fatalf("FirstFreeform = %v, want \"8A\"", got)
+	}
+	// Update in place.
+	l.SetFreeform("com.apple.iTunes", "initialkey", makeUTF8Data("9B"))
+	got = l.FirstFreeform("com.apple.iTunes", "initialkey")
+	if got == nil || got.String() != "9B" {
+		t.Errorf("after update FirstFreeform = %v, want \"9B\"", got)
+	}
+	if n := len(l.Items); n != 1 {
+		t.Errorf("Items after update = %d, want 1 (update must not duplicate)", n)
+	}
+}
+
+func TestIlst_SetFreeformNilRemoves(t *testing.T) {
+	l := &Ilst{}
+	l.SetFreeform("com.apple.iTunes", "initialkey", makeUTF8Data("8A"))
+	l.SetFreeform("com.apple.iTunes", "initialkey", nil)
+	if got := l.FirstFreeform("com.apple.iTunes", "initialkey"); got != nil {
+		t.Errorf("FirstFreeform = %v, want nil after SetFreeform(nil)", got)
+	}
+}
+
+func TestIlst_RemoveFreeform_OnlyTargets(t *testing.T) {
+	// Three coexisting items: standard Title, a freeform initialkey,
+	// and an unrelated freeform iTunNORM. RemoveFreeform on the
+	// initialkey pair must leave the other two alone.
+	l := &Ilst{}
+	l.SetTitle("Song")
+	l.SetFreeform("com.apple.iTunes", "initialkey", makeUTF8Data("8A"))
+	l.SetFreeform("com.apple.iTunes", "iTunNORM", makeUTF8Data(" 00000111"))
+
+	l.RemoveFreeform("com.apple.iTunes", "initialkey")
+
+	if l.Title() != "Song" {
+		t.Errorf("Title = %q, want untouched", l.Title())
+	}
+	if got := l.FirstFreeform("com.apple.iTunes", "initialkey"); got != nil {
+		t.Errorf("initialkey survived: %v", got)
+	}
+	if got := l.FirstFreeform("com.apple.iTunes", "iTunNORM"); got == nil {
+		t.Errorf("iTunNORM was wrongly removed")
+	}
+}
+
+func TestIlst_FreeformRoundTripsThroughEncode(t *testing.T) {
+	l := &Ilst{}
+	l.SetTitle("Song")
+	l.SetFreeform("com.apple.iTunes", "initialkey", makeUTF8Data("8A"))
+
+	body, err := l.encode()
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	out, err := parseIlst(body)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if out.Title() != "Song" {
+		t.Errorf("Title = %q after round-trip", out.Title())
+	}
+	d := out.FirstFreeform("com.apple.iTunes", "initialkey")
+	if d == nil || d.String() != "8A" {
+		t.Errorf("freeform after round-trip = %v, want \"8A\"", d)
+	}
+}
+
 func TestIlst_SetTextEmptyRemoves(t *testing.T) {
 	l := &Ilst{}
 	l.SetTitle("hello")

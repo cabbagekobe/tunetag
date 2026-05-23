@@ -160,6 +160,10 @@ func (i *Item) encode() ([]byte, error) {
 }
 
 // First returns the first data atom of the named key, or nil.
+//
+// First is intended for the standard 4-character keys. Calling it with
+// "----" returns the data atom of whichever freeform item happens to come
+// first, which is rarely what callers want; use FirstFreeform instead.
 func (l *Ilst) First(key string) *DataAtom {
 	for _, it := range l.Items {
 		if it.Key == key && len(it.Data) > 0 {
@@ -171,6 +175,11 @@ func (l *Ilst) First(key string) *DataAtom {
 
 // Set replaces every existing item for key with one carrying a
 // single data atom. Pass nil to remove the key entirely.
+//
+// Set is intended for the standard 4-character keys. Calling it with
+// "----" removes every freeform item regardless of mean/name and emits a
+// new item with MeanDomain/Name empty, which is invalid per spec; use
+// SetFreeform to address one specific freeform item by (mean, name).
 func (l *Ilst) Set(key string, data *DataAtom) {
 	l.Remove(key)
 	if data == nil {
@@ -180,12 +189,64 @@ func (l *Ilst) Set(key string, data *DataAtom) {
 }
 
 // Remove deletes every item whose Key equals key.
+//
+// Remove is intended for the standard 4-character keys. Calling it with
+// "----" deletes every freeform item indiscriminately; use
+// RemoveFreeform to delete just one specific (mean, name) pair.
 func (l *Ilst) Remove(key string) {
 	out := l.Items[:0]
 	for _, it := range l.Items {
 		if it.Key != key {
 			out = append(out, it)
 		}
+	}
+	l.Items = out
+}
+
+// FirstFreeform returns the first data atom of the freeform "----" item
+// identified by (meanDomain, name), or nil if no matching item exists.
+//
+// Freeform atoms encode tagger-specific fields that the standard
+// 4-character keys cannot express. For example, the Mixed In Key /
+// Music.app "Initial Key" tag lives at
+// (meanDomain="com.apple.iTunes", name="initialkey").
+func (l *Ilst) FirstFreeform(meanDomain, name string) *DataAtom {
+	for _, it := range l.Items {
+		if it.Key == "----" && it.MeanDomain == meanDomain && it.Name == name && len(it.Data) > 0 {
+			return it.Data[0]
+		}
+	}
+	return nil
+}
+
+// SetFreeform replaces the freeform "----" item identified by
+// (meanDomain, name) with one carrying a single data atom. Other
+// freeform items (different mean/name pairs) are left untouched.
+// Passing data=nil removes only the matching (mean, name) item, which
+// is equivalent to RemoveFreeform.
+func (l *Ilst) SetFreeform(meanDomain, name string, data *DataAtom) {
+	l.RemoveFreeform(meanDomain, name)
+	if data == nil {
+		return
+	}
+	l.Items = append(l.Items, &Item{
+		Key:        "----",
+		MeanDomain: meanDomain,
+		Name:       name,
+		Data:       []*DataAtom{data},
+	})
+}
+
+// RemoveFreeform deletes every freeform "----" item whose
+// (MeanDomain, Name) matches the arguments. Standard 4-character items
+// and freeform items with a different (mean, name) pair are kept.
+func (l *Ilst) RemoveFreeform(meanDomain, name string) {
+	out := l.Items[:0]
+	for _, it := range l.Items {
+		if it.Key == "----" && it.MeanDomain == meanDomain && it.Name == name {
+			continue
+		}
+		out = append(out, it)
 	}
 	l.Items = out
 }

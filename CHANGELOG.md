@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `mp4.Ilst.SetFreeform(meanDomain, name, data)`,
+  `FirstFreeform(meanDomain, name)`, and
+  `RemoveFreeform(meanDomain, name)` for addressing iTunes-style
+  freeform `----` atoms by their (mean, name) pair. The standard
+  `Set` / `Remove` / `First` only key on the 4-character ID, so
+  passing `"----"` to them indiscriminately removes every freeform
+  atom (iTunNORM, replaygain, Mixed In Key's `initialkey`, …) and
+  cannot specify the mean/name on write. The new methods leave
+  unrelated freeform items alone and emit valid mean/name boxes.
+  Their godoc and the existing `Set` / `Remove` / `First` comments
+  point callers to the right method.
+
 ## [0.1.3] - 2026-05-17
 
 ### Added
