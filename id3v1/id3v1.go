@@ -84,7 +84,7 @@ func ReadFile(path string) (*Tag, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return Read(f)
 }
 
@@ -118,7 +118,7 @@ func (t *Tag) WriteFile(path string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	hasTag, err := hasTrailer(f)
 	if err != nil {
@@ -143,7 +143,7 @@ func StripFile(path string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	hasTag, err := hasTrailer(f)
 	if err != nil {
 		return err

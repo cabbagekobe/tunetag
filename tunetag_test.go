@@ -145,7 +145,7 @@ func TestDetect_ID3v2FromEncode(t *testing.T) {
 	var buf bytes.Buffer
 	tag := &id3v2.Tag{Version: id3v2.V24, Padding: 0}
 	tag.SetTitle("hello")
-	tag.Encode(&buf)
+	_ = tag.Encode(&buf)
 	got, err := Detect(bytes.NewReader(buf.Bytes()))
 	if err != nil {
 		t.Fatal(err)
@@ -158,7 +158,7 @@ func TestDetect_ID3v2FromEncode(t *testing.T) {
 func TestDetect_ID3v1Trailer(t *testing.T) {
 	var buf bytes.Buffer
 	buf.Write(make([]byte, 50))
-	(&id3v1.Tag{Title: "X", Genre: id3v1.GenreNone}).Encode(&buf)
+	_ = (&id3v1.Tag{Title: "X", Genre: id3v1.GenreNone}).Encode(&buf)
 	got, err := Detect(bytes.NewReader(buf.Bytes()))
 	if err != nil {
 		t.Fatal(err)
@@ -227,7 +227,7 @@ func TestDetect_FtypNotAtFront(t *testing.T) {
 func TestDetect_RestoresStreamPosition(t *testing.T) {
 	body := []byte("PADBYTEID3\x04\x00\x00\x00\x00\x00\x00")
 	rs := bytes.NewReader(body)
-	rs.Seek(5, io.SeekStart)
+	_, _ = rs.Seek(5, io.SeekStart)
 	_, _ = Detect(rs) // outcome irrelevant; we only care about position
 	pos, _ := rs.Seek(0, io.SeekCurrent)
 	if pos != 5 {
@@ -238,7 +238,7 @@ func TestDetect_RestoresStreamPosition(t *testing.T) {
 func TestDetect_PositionRestoredOnUnknown(t *testing.T) {
 	body := bytes.Repeat([]byte{0xDD}, 64)
 	rs := bytes.NewReader(body)
-	rs.Seek(20, io.SeekStart)
+	_, _ = rs.Seek(20, io.SeekStart)
 	_, err := Detect(rs)
 	if !errors.Is(err, ErrUnknownFormat) {
 		t.Errorf("got %v, want ErrUnknownFormat", err)
@@ -277,7 +277,7 @@ func TestOpen_ID3v2(t *testing.T) {
 func TestOpen_ID3v1(t *testing.T) {
 	var buf bytes.Buffer
 	buf.Write(make([]byte, 50))
-	(&id3v1.Tag{Title: "OldSchool", Artist: "Pioneer", Genre: id3v1.GenreNone}).Encode(&buf)
+	_ = (&id3v1.Tag{Title: "OldSchool", Artist: "Pioneer", Genre: id3v1.GenreNone}).Encode(&buf)
 	p := writeFile(t, "x.mp3", buf.Bytes())
 
 	got, err := Open(p)
@@ -338,7 +338,7 @@ func TestOpen_WAV_LISTINFO(t *testing.T) {
 	// INAM = "Wave Title"\0
 	v := append([]byte("Wave Title"), 0)
 	info.WriteString("INAM")
-	binary.Write(&info, binary.LittleEndian, uint32(len(v)))
+	_ = binary.Write(&info, binary.LittleEndian, uint32(len(v)))
 	info.Write(v)
 	if len(v)%2 == 1 {
 		info.WriteByte(0)
@@ -387,13 +387,13 @@ func TestOpen_WAV_PrefersID3OverLISTINFO(t *testing.T) {
 	id3 := &id3v2.Tag{Version: id3v2.V24, Padding: 0}
 	id3.SetTitle("id3-wins")
 	var id3Body bytes.Buffer
-	id3.Encode(&id3Body)
+	_ = id3.Encode(&id3Body)
 	// Build INFO body.
 	var info bytes.Buffer
 	info.WriteString("INFO")
 	v := append([]byte("list-loses"), 0)
 	info.WriteString("INAM")
-	binary.Write(&info, binary.LittleEndian, uint32(len(v)))
+	_ = binary.Write(&info, binary.LittleEndian, uint32(len(v)))
 	info.Write(v)
 
 	var pay bytes.Buffer
@@ -415,7 +415,7 @@ func TestStrip_WAV(t *testing.T) {
 	info.WriteString("INFO")
 	v := append([]byte("removeme"), 0)
 	info.WriteString("INAM")
-	binary.Write(&info, binary.LittleEndian, uint32(len(v)))
+	_ = binary.Write(&info, binary.LittleEndian, uint32(len(v)))
 	info.Write(v)
 
 	var pay bytes.Buffer
@@ -561,9 +561,9 @@ func makeOggPage(serial, seq uint32, flags byte, packets ...[]byte) []byte {
 	out.WriteByte(0)
 	out.WriteByte(flags)
 	out.Write(make([]byte, 8))
-	binary.Write(&out, binary.LittleEndian, serial)
-	binary.Write(&out, binary.LittleEndian, seq)
-	binary.Write(&out, binary.LittleEndian, uint32(0))
+	_ = binary.Write(&out, binary.LittleEndian, serial)
+	_ = binary.Write(&out, binary.LittleEndian, seq)
+	_ = binary.Write(&out, binary.LittleEndian, uint32(0))
 	out.WriteByte(byte(len(segs)))
 	out.Write(segs)
 	out.Write(body.Bytes())
@@ -574,8 +574,8 @@ func makeOggPage(serial, seq uint32, flags byte, packets ...[]byte) []byte {
 
 func TestOpen_APE(t *testing.T) {
 	tag := &ape.Tag{HasHeader: true}
-	tag.Set("Title", "Ape Title")
-	tag.Set("Artist", "Ape Artist")
+	_ = tag.Set("Title", "Ape Title")
+	_ = tag.Set("Artist", "Ape Artist")
 	body, err := tag.Encode()
 	if err != nil {
 		t.Fatal(err)
@@ -597,7 +597,7 @@ func TestOpen_APE(t *testing.T) {
 
 func TestStrip_APE(t *testing.T) {
 	tag := &ape.Tag{HasHeader: true}
-	tag.Set("Title", "byebye")
+	_ = tag.Set("Title", "byebye")
 	body, _ := tag.Encode()
 	audio := []byte("audio_kept")
 	p := writeFile(t, "x.ape", append(append([]byte{}, audio...), body...))
@@ -687,7 +687,7 @@ func TestOpen_OggPicture(t *testing.T) {
 
 func TestOpen_APEPicture(t *testing.T) {
 	tag := &ape.Tag{HasHeader: true}
-	tag.Set("Title", "x")
+	_ = tag.Set("Title", "x")
 	pic := &ape.Picture{Filename: "cover.jpg", Data: []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x10, 0x20}}
 	if err := tag.AddPicture(pic); err != nil {
 		t.Fatal(err)
@@ -766,9 +766,7 @@ func TestOpen_ASF(t *testing.T) {
 	}
 	scaffold.Title = src.Title
 	scaffold.Author = src.Author
-	for _, d := range src.Extended {
-		scaffold.Extended = append(scaffold.Extended, d)
-	}
+	scaffold.Extended = append(scaffold.Extended, src.Extended...)
 	if err := scaffold.WriteFile(p); err != nil {
 		t.Fatal(err)
 	}
@@ -859,7 +857,7 @@ func TestOpen_AAC_WithLeadingID3v2(t *testing.T) {
 	tag := &id3v2.Tag{Version: id3v2.V24, Padding: 0}
 	tag.SetTitle("AAC w/ ID3")
 	var buf bytes.Buffer
-	tag.Encode(&buf)
+	_ = tag.Encode(&buf)
 	buf.Write([]byte{0xFF, 0xF1, 0x50, 0x80})
 	buf.Write(make([]byte, 32))
 	p := writeFile(t, "x.aac", buf.Bytes())
@@ -879,7 +877,7 @@ func TestOpen_AAC_WithLeadingID3v2(t *testing.T) {
 func TestOpen_FallsBackToID3v1(t *testing.T) {
 	var buf bytes.Buffer
 	buf.Write(make([]byte, 100))
-	(&id3v1.Tag{Title: "only v1", Genre: id3v1.GenreNone}).Encode(&buf)
+	_ = (&id3v1.Tag{Title: "only v1", Genre: id3v1.GenreNone}).Encode(&buf)
 	p := writeFile(t, "x.mp3", buf.Bytes())
 
 	tag, err := Open(p)
@@ -898,9 +896,9 @@ func TestOpen_PreferenceID3v2OverID3v1(t *testing.T) {
 	tag := &id3v2.Tag{Version: id3v2.V24, Padding: 0}
 	tag.SetTitle("V2")
 	var buf bytes.Buffer
-	tag.Encode(&buf)
+	_ = tag.Encode(&buf)
 	buf.Write(make([]byte, 50))
-	(&id3v1.Tag{Title: "V1", Genre: id3v1.GenreNone}).Encode(&buf)
+	_ = (&id3v1.Tag{Title: "V1", Genre: id3v1.GenreNone}).Encode(&buf)
 	p := writeFile(t, "x.mp3", buf.Bytes())
 
 	got, err := Open(p)
@@ -960,9 +958,9 @@ func TestOpenMP3_PrefersV2(t *testing.T) {
 	tag := &id3v2.Tag{Version: id3v2.V24, Padding: 0}
 	tag.SetTitle("V2 Title")
 	var buf bytes.Buffer
-	tag.Encode(&buf)
+	_ = tag.Encode(&buf)
 	buf.Write(make([]byte, 50))
-	(&id3v1.Tag{Title: "V1 Title", Genre: id3v1.GenreNone}).Encode(&buf)
+	_ = (&id3v1.Tag{Title: "V1 Title", Genre: id3v1.GenreNone}).Encode(&buf)
 	p := writeFile(t, "x.mp3", buf.Bytes())
 
 	mp3, err := OpenMP3(p)
@@ -990,7 +988,7 @@ func TestOpenMP3_NeitherFound(t *testing.T) {
 func TestOpenMP3_OnlyV1(t *testing.T) {
 	var buf bytes.Buffer
 	buf.Write(make([]byte, 50))
-	(&id3v1.Tag{Title: "Only V1", Genre: id3v1.GenreNone}).Encode(&buf)
+	_ = (&id3v1.Tag{Title: "Only V1", Genre: id3v1.GenreNone}).Encode(&buf)
 	p := writeFile(t, "x.mp3", buf.Bytes())
 
 	mp3, err := OpenMP3(p)
@@ -1010,7 +1008,7 @@ func TestOpenMP3_OnlyV1(t *testing.T) {
 func TestStrip_ID3v1(t *testing.T) {
 	var buf bytes.Buffer
 	buf.Write([]byte("AUDIO_ONLY_BODY"))
-	(&id3v1.Tag{Title: "x", Genre: id3v1.GenreNone}).Encode(&buf)
+	_ = (&id3v1.Tag{Title: "x", Genre: id3v1.GenreNone}).Encode(&buf)
 	p := writeFile(t, "x.mp3", buf.Bytes())
 
 	if err := Strip(p); err != nil {
@@ -1026,7 +1024,7 @@ func TestStrip_ID3v2(t *testing.T) {
 	tag := &id3v2.Tag{Version: id3v2.V24, Padding: 0}
 	tag.SetTitle("X")
 	var buf bytes.Buffer
-	tag.Encode(&buf)
+	_ = tag.Encode(&buf)
 	buf.Write([]byte("AUDIO"))
 	p := writeFile(t, "x.mp3", buf.Bytes())
 
@@ -1098,7 +1096,7 @@ func TestStrip_GarbageFile(t *testing.T) {
 func TestMP3Tag_V1FieldsExposedWhenV2Absent(t *testing.T) {
 	var buf bytes.Buffer
 	buf.Write(make([]byte, 50))
-	(&id3v1.Tag{
+	_ = (&id3v1.Tag{
 		Title:  "the title",
 		Artist: "the artist",
 		Album:  "the album",
@@ -1138,7 +1136,7 @@ func TestPicturesAreSafelyDecoupledFromV2Tag(t *testing.T) {
 		&id3v2.PictureFrame{Encoding: id3v2.EncUTF8, MIME: "image/jpeg", PictureType: 3, Data: picData},
 	}}
 	var buf bytes.Buffer
-	tag.Encode(&buf)
+	_ = tag.Encode(&buf)
 	p := writeFile(t, "x.mp3", buf.Bytes())
 
 	got, err := Open(p)

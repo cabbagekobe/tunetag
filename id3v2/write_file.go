@@ -26,7 +26,7 @@ func (t *Tag) WriteFile(path string) error {
 	closed := false
 	defer func() {
 		if !closed {
-			src.Close()
+			_ = src.Close()
 		}
 	}()
 
@@ -49,7 +49,7 @@ func (t *Tag) WriteFile(path string) error {
 	// the freshly written tag.
 	if minRequired <= existing {
 		closed = true
-		src.Close()
+		_ = src.Close()
 		availPad := int(existing) - HeaderSize - int(framesSize)
 		return overwriteInPlace(path, t, availPad, existing)
 	}
@@ -90,7 +90,7 @@ func scanExistingTagSize(f *os.File) (uint32, error) {
 	return total, nil
 }
 
-func overwriteInPlace(path string, t *Tag, pad int, expected uint32) error {
+func overwriteInPlace(path string, t *Tag, pad int, expected uint32) (err error) {
 	var buf bytes.Buffer
 	if err := t.encodeWithPadding(&buf, pad); err != nil {
 		return err
@@ -102,7 +102,11 @@ func overwriteInPlace(path string, t *Tag, pad int, expected uint32) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
@@ -118,23 +122,23 @@ func rewriteWithBody(path string, src *os.File, t *Tag) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".tunetag-*.tmp")
 	if err != nil {
-		src.Close()
+		_ = src.Close()
 		return err
 	}
 	tmpPath := tmp.Name()
 	cleanup := func() {
-		tmp.Close()
-		os.Remove(tmpPath)
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
 	}
 
 	if err := t.Encode(tmp); err != nil {
 		cleanup()
-		src.Close()
+		_ = src.Close()
 		return err
 	}
 	if _, err := io.Copy(tmp, src); err != nil {
 		cleanup()
-		src.Close()
+		_ = src.Close()
 		return err
 	}
 	// Close the source BEFORE the rename. Windows refuses to rename
@@ -148,11 +152,11 @@ func rewriteWithBody(path string, src *os.File, t *Tag) error {
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	return nil

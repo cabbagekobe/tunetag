@@ -13,7 +13,7 @@ func detect(path string) (tunetag.Format, error) {
 	if err != nil {
 		return tunetag.FormatUnknown, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return tunetag.Detect(f)
 }
 
@@ -21,12 +21,12 @@ func detect(path string) (tunetag.Format, error) {
 func parseSlash(s string) (n, total int) {
 	for i, c := range s {
 		if c == '/' {
-			fmt.Sscanf(s[:i], "%d", &n)
-			fmt.Sscanf(s[i+1:], "%d", &total)
+			_, _ = fmt.Sscanf(s[:i], "%d", &n)
+			_, _ = fmt.Sscanf(s[i+1:], "%d", &total)
 			return
 		}
 	}
-	fmt.Sscanf(s, "%d", &n)
+	_, _ = fmt.Sscanf(s, "%d", &n)
 	return n, 0
 }
 

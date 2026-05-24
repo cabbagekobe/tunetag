@@ -65,14 +65,14 @@ func readBoxHeader(r io.ReaderAt, off, fileSize int64) (Box, error) {
 	copy(typ[:], hdr[4:8])
 	headerSize := 8
 	var totalSize uint64
-	switch {
-	case rawSize == 0:
+	switch rawSize {
+	case 0:
 		// Box extends to end of file.
 		if off >= fileSize {
 			return Box{}, fmt.Errorf("mp4: box at %d: size=0 with no remaining data", off)
 		}
 		totalSize = uint64(fileSize - off)
-	case rawSize == 1:
+	case 1:
 		// 64-bit largesize follows.
 		if _, err := r.ReadAt(hdr[8:16], off+8); err != nil {
 			return Box{}, fmt.Errorf("mp4: read largesize at %d: %w", off+8, err)
@@ -112,7 +112,11 @@ func scanTopLevel(r io.ReaderAt, fileSize int64) ([]Box, error) {
 	return boxes, nil
 }
 
-// scanChildren reads child boxes within a parent body.
+// scanChildren reads child boxes within a parent body. Kept as a
+// sibling of scanTopLevel for forward use by deeper traversal paths
+// (see rewriteAtomic in mp4.go for the same forward-use pattern).
+//
+//nolint:unused
 func scanChildren(r io.ReaderAt, parentBody, parentLen int64) ([]Box, error) {
 	end := parentBody + parentLen
 	var boxes []Box

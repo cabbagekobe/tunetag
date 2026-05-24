@@ -2,7 +2,7 @@
 // (the variable-length block at the start of an MP3 file marked
 // with "ID3").
 //
-// Reading
+// # Reading
 //
 // Read parses any of the three supported revisions; v2.2 frame IDs
 // are normalised to their canonical 4-character v2.3/2.4 equivalents
@@ -11,7 +11,7 @@
 // transparently. The extended header (v2.3 / v2.4) is skipped on
 // read and not preserved on write.
 //
-// Writing
+// # Writing
 //
 // Encode emits a tag at t.Version. V23 and V24 are first-class; V22
 // is also supported but the writer errors out on any frame whose
@@ -86,7 +86,7 @@ func ReadFile(path string) (*Tag, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return Read(f)
 }
 

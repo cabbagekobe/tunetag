@@ -32,7 +32,7 @@ import (
 // only branch on ErrUnknownFormat keep working unchanged.
 func Detect(rs io.ReadSeeker) (Format, error) {
 	cur, _ := rs.Seek(0, io.SeekCurrent)
-	defer rs.Seek(cur, io.SeekStart)
+	defer func() { _, _ = rs.Seek(cur, io.SeekStart) }()
 
 	// Resolve the total readable size up front so empty and extremely
 	// short inputs can be reported with a clearer sentinel than the
@@ -173,7 +173,7 @@ func Open(path string) (Tag, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	format, err := Detect(f)
 	if err != nil {
 		return nil, err
@@ -264,7 +264,7 @@ func OpenMP3(path string) (*MP3, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	v1, err := id3v1.Read(f)
 	if err != nil && !errors.Is(err, id3v1.ErrNoTag) {
 		return nil, err

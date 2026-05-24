@@ -65,7 +65,7 @@ func (m *mp3Tag) Year() int {
 	}
 	if m.v1 != nil && m.v1.Year != "" {
 		var y int
-		fmt.Sscanf(m.v1.Year, "%d", &y)
+		_, _ = fmt.Sscanf(m.v1.Year, "%d", &y)
 		return y
 	}
 	return 0
@@ -171,7 +171,7 @@ func (f *flacTag) Year() int {
 		return 0
 	}
 	var y int
-	fmt.Sscanf(s[:4], "%d", &y)
+	_, _ = fmt.Sscanf(s[:4], "%d", &y)
 	return y
 }
 
@@ -253,10 +253,10 @@ func firstVC(vc *flac.VorbisComment, key string) string {
 // numTotal parses two stringified integers into (n, t).
 func numTotal(num, total string) (n, t int) {
 	if num != "" {
-		fmt.Sscanf(num, "%d", &n)
+		_, _ = fmt.Sscanf(num, "%d", &n)
 	}
 	if total != "" {
-		fmt.Sscanf(total, "%d", &t)
+		_, _ = fmt.Sscanf(total, "%d", &t)
 	}
 	return
 }

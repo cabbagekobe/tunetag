@@ -132,7 +132,7 @@ func ReadFile(path string) (*File, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return Read(f)
 }
 
@@ -376,7 +376,7 @@ func (p *packetReader) readPage(firstPage bool) error {
 	// size 255 means continuation in the next segment (and
 	// possibly across pages).
 	off := 0
-	for i, s := range segs {
+	for _, s := range segs {
 		size := int(s)
 		p.pending.Write(body[off : off+size])
 		off += size
@@ -386,11 +386,11 @@ func (p *packetReader) readPage(firstPage bool) error {
 			copy(out, p.pending.Bytes())
 			p.pending.Reset()
 			p.queue = append(p.queue, out)
-		} else if i == len(segs)-1 {
-			// Last segment is 255 → packet continues on next
-			// page. The continuation flag should be set on
-			// that page, but we don't need to verify.
 		}
+		// Otherwise the segment was a full 255 and the packet
+		// continues. If this was the page's last segment the
+		// continuation flag should be set on the next page; we
+		// don't need to verify it here.
 	}
 	return nil
 }

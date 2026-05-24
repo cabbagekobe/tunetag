@@ -43,11 +43,11 @@ func buildCDO(title, author, copyright, descr, rating string) []byte {
 	d := encodeUTF16NUL(descr)
 	r := encodeUTF16NUL(rating)
 	var body bytes.Buffer
-	binary.Write(&body, binary.LittleEndian, uint16(len(t)))
-	binary.Write(&body, binary.LittleEndian, uint16(len(a)))
-	binary.Write(&body, binary.LittleEndian, uint16(len(c)))
-	binary.Write(&body, binary.LittleEndian, uint16(len(d)))
-	binary.Write(&body, binary.LittleEndian, uint16(len(r)))
+	_ = binary.Write(&body, binary.LittleEndian, uint16(len(t)))
+	_ = binary.Write(&body, binary.LittleEndian, uint16(len(a)))
+	_ = binary.Write(&body, binary.LittleEndian, uint16(len(c)))
+	_ = binary.Write(&body, binary.LittleEndian, uint16(len(d)))
+	_ = binary.Write(&body, binary.LittleEndian, uint16(len(r)))
 	body.Write(t)
 	body.Write(a)
 	body.Write(c)
@@ -58,13 +58,13 @@ func buildCDO(title, author, copyright, descr, rating string) []byte {
 
 func buildECDO(descriptors []Descriptor) []byte {
 	var body bytes.Buffer
-	binary.Write(&body, binary.LittleEndian, uint16(len(descriptors)))
+	_ = binary.Write(&body, binary.LittleEndian, uint16(len(descriptors)))
 	for _, d := range descriptors {
 		name := encodeUTF16NUL(d.Name)
-		binary.Write(&body, binary.LittleEndian, uint16(len(name)))
+		_ = binary.Write(&body, binary.LittleEndian, uint16(len(name)))
 		body.Write(name)
-		binary.Write(&body, binary.LittleEndian, uint16(d.Type))
-		binary.Write(&body, binary.LittleEndian, uint16(len(d.Value)))
+		_ = binary.Write(&body, binary.LittleEndian, uint16(d.Type))
+		_ = binary.Write(&body, binary.LittleEndian, uint16(len(d.Value)))
 		body.Write(d.Value)
 	}
 	return buildObject(guidExtendedContentDescriptionObject, body.Bytes())
@@ -123,14 +123,14 @@ func TestRead_RejectsOversizedChildObject(t *testing.T) {
 	binary.LittleEndian.PutUint64(child[16:24], 0xFFFFFFFFFFFFFFFF)
 
 	var hdrBody bytes.Buffer
-	binary.Write(&hdrBody, binary.LittleEndian, uint32(1)) // 1 child
+	_ = binary.Write(&hdrBody, binary.LittleEndian, uint32(1)) // 1 child
 	hdrBody.WriteByte(0x01)
 	hdrBody.WriteByte(0x02)
 	hdrBody.Write(child[:])
 
 	var raw bytes.Buffer
 	raw.Write(hdrGUID[:])
-	binary.Write(&raw, binary.LittleEndian, uint64(objHeaderSize+hdrBody.Len()))
+	_ = binary.Write(&raw, binary.LittleEndian, uint64(objHeaderSize+hdrBody.Len()))
 	raw.Write(hdrBody.Bytes())
 
 	if _, err := Read(bytes.NewReader(raw.Bytes())); !errors.Is(err, ErrTruncated) {

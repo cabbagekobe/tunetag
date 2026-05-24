@@ -47,7 +47,7 @@ func TestRead_RejectsOversizedChunk(t *testing.T) {
 	// attempt a multi-GiB allocation.
 	var pay bytes.Buffer
 	pay.WriteString("COMM")
-	binary.Write(&pay, binary.BigEndian, uint32(0xFFFFFFFF))
+	_ = binary.Write(&pay, binary.BigEndian, uint32(0xFFFFFFFF))
 	pay.Write(bytes.Repeat([]byte{0xAB}, 32))
 	raw := buildAIFF("AIFF", pay.Bytes())
 	_, err := Read(bytes.NewReader(raw))
@@ -142,7 +142,7 @@ func TestRead_ID3PreferredOverNAME(t *testing.T) {
 	id3 := &id3v2.Tag{Version: id3v2.V24, Padding: 0}
 	id3.SetTitle("id3-wins")
 	var b bytes.Buffer
-	id3.Encode(&b)
+	_ = id3.Encode(&b)
 	var pay bytes.Buffer
 	putChunk(&pay, "NAME", []byte("name-loses"))
 	putChunk(&pay, "ID3 ", b.Bytes())

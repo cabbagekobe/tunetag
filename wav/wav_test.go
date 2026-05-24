@@ -73,7 +73,7 @@ func TestRead_RejectsOversizedChunk(t *testing.T) {
 	// failed; now we reject up front.
 	var pay bytes.Buffer
 	pay.WriteString("fmt ")
-	binary.Write(&pay, binary.LittleEndian, uint32(0xFFFFFFFF)) // claimed size
+	_ = binary.Write(&pay, binary.LittleEndian, uint32(0xFFFFFFFF)) // claimed size
 	// Add a few real bytes so the file isn't empty.
 	pay.Write(bytes.Repeat([]byte{0xAB}, 32))
 	raw := buildWAV(pay.Bytes())
@@ -213,7 +213,7 @@ func TestRead_ID3PreferredOverLISTINFO(t *testing.T) {
 	id3 := &id3v2.Tag{Version: id3v2.V24, Padding: 0}
 	id3.SetTitle("id3-wins")
 	var id3Body bytes.Buffer
-	id3.Encode(&id3Body)
+	_ = id3.Encode(&id3Body)
 
 	var pay bytes.Buffer
 	putChunk(&pay, ChunkLIST, infoBody([2]string{InfoTitle, "list-loses"}))
@@ -236,7 +236,7 @@ func TestRead_StripsTrailingNULs(t *testing.T) {
 	body.WriteString(ChunkINFO)
 	val := []byte("title\x00\x00\x00\x00") // 5 chars + 4 NULs = 9 bytes
 	body.WriteString(InfoTitle)
-	binary.Write(&body, binary.LittleEndian, uint32(len(val)))
+	_ = binary.Write(&body, binary.LittleEndian, uint32(len(val)))
 	body.Write(val)
 	body.WriteByte(0) // odd length pad
 

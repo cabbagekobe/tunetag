@@ -100,7 +100,7 @@ func ReadFile(path string) (*File, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return Read(f)
 }
 
@@ -185,7 +185,7 @@ func (f *File) WriteFile(path string) error {
 	closed := false
 	defer func() {
 		if !closed {
-			src.Close()
+			_ = src.Close()
 		}
 	}()
 
@@ -205,14 +205,14 @@ func (f *File) WriteFile(path string) error {
 	case sizeNoPad == available:
 		// Exact fit; no padding block needed.
 		closed = true
-		src.Close()
+		_ = src.Close()
 		return f.writeMetadataInPlace(path, blocksNoPad)
 	case sizeNoPad+4 <= available:
 		// Room for an explicit PADDING block to absorb the slack.
 		padBody := available - sizeNoPad - 4
 		padded := append(append([]Block(nil), blocksNoPad...), &PaddingBlock{Size: padBody})
 		closed = true
-		src.Close()
+		_ = src.Close()
 		return f.writeMetadataInPlace(path, padded)
 	}
 
@@ -231,7 +231,7 @@ func (f *File) WriteFile(path string) error {
 	return f.rewriteAtomic(path, encoded, src)
 }
 
-func (f *File) writeMetadataInPlace(path string, blocks []Block) error {
+func (f *File) writeMetadataInPlace(path string, blocks []Block) (err error) {
 	tmp := &File{Blocks: blocks}
 	body, err := tmp.encodeMetadata()
 	if err != nil {
@@ -241,7 +241,11 @@ func (f *File) writeMetadataInPlace(path string, blocks []Block) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func() {
+		if cerr := out.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 	if _, err := out.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
@@ -283,27 +287,27 @@ func (f *File) rewriteAtomic(path string, encoded []byte, src *os.File) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".tunetag-flac-*.tmp")
 	if err != nil {
-		src.Close()
+		_ = src.Close()
 		return err
 	}
 	tmpPath := tmp.Name()
 	cleanup := func() {
-		tmp.Close()
-		os.Remove(tmpPath)
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
 	}
 	if _, err := tmp.Write(Magic[:]); err != nil {
 		cleanup()
-		src.Close()
+		_ = src.Close()
 		return err
 	}
 	if _, err := tmp.Write(encoded); err != nil {
 		cleanup()
-		src.Close()
+		_ = src.Close()
 		return err
 	}
 	if _, err := io.Copy(tmp, src); err != nil {
 		cleanup()
-		src.Close()
+		_ = src.Close()
 		return err
 	}
 	// Close the source BEFORE the rename. Windows refuses to rename
@@ -317,11 +321,11 @@ func (f *File) rewriteAtomic(path string, encoded []byte, src *os.File) error {
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	return nil

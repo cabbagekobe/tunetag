@@ -44,11 +44,11 @@ func TestRead_RejectsOversizedItemCount(t *testing.T) {
 	// clean error.
 	var footer bytes.Buffer
 	footer.Write(Preamble[:])
-	binary.Write(&footer, binary.LittleEndian, uint32(2000)) // version
-	binary.Write(&footer, binary.LittleEndian, uint32(32))   // size = footer only
-	binary.Write(&footer, binary.LittleEndian, uint32(0xFFFFFFFF))
-	binary.Write(&footer, binary.LittleEndian, uint32(0)) // flags
-	footer.Write(make([]byte, 8))                         // reserved
+	_ = binary.Write(&footer, binary.LittleEndian, uint32(2000)) // version
+	_ = binary.Write(&footer, binary.LittleEndian, uint32(32))   // size = footer only
+	_ = binary.Write(&footer, binary.LittleEndian, uint32(0xFFFFFFFF))
+	_ = binary.Write(&footer, binary.LittleEndian, uint32(0)) // flags
+	footer.Write(make([]byte, 8))                             // reserved
 	body := append([]byte("audio"), footer.Bytes()...)
 	_, err := Read(bytes.NewReader(body))
 	if err == nil {
@@ -74,11 +74,11 @@ func TestRead_RandomBytes(t *testing.T) {
 
 func TestEncodeAndRead_RoundTrip(t *testing.T) {
 	tag := &Tag{HasHeader: true}
-	tag.Set("Title", "Hello")
-	tag.Set("Artist", "Alice")
-	tag.Set("Album", "Songs")
-	tag.Set("Year", "2026")
-	tag.Set("Track", "3/12")
+	_ = tag.Set("Title", "Hello")
+	_ = tag.Set("Artist", "Alice")
+	_ = tag.Set("Album", "Songs")
+	_ = tag.Set("Year", "2026")
+	_ = tag.Set("Track", "3/12")
 	body, err := tag.Encode()
 	if err != nil {
 		t.Fatal(err)
@@ -102,7 +102,7 @@ func TestEncodeAndRead_RoundTrip(t *testing.T) {
 
 func TestEncode_NoHeader(t *testing.T) {
 	tag := &Tag{}
-	tag.Set("Title", "x")
+	_ = tag.Set("Title", "x")
 	body, _ := tag.Encode()
 	// Without header: only footer's 32 bytes appended.
 	if !bytes.Equal(body[len(body)-32:len(body)-32+8], Preamble[:]) {
@@ -112,7 +112,7 @@ func TestEncode_NoHeader(t *testing.T) {
 
 func TestRead_PrefersAPEOverID3v1(t *testing.T) {
 	tag := &Tag{HasHeader: true}
-	tag.Set("Title", "From APE")
+	_ = tag.Set("Title", "From APE")
 	body, _ := tag.Encode()
 	// Append a 128-byte ID3v1 trailer so the file looks like
 	// audio + APEv2 + ID3v1.
@@ -132,7 +132,7 @@ func TestRead_PrefersAPEOverID3v1(t *testing.T) {
 
 func TestSet_RemovesOnEmptyValue(t *testing.T) {
 	tag := &Tag{}
-	tag.Set("Title", "x")
+	_ = tag.Set("Title", "x")
 	if err := tag.Set("Title", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -153,8 +153,8 @@ func TestSet_RejectsInvalidKey(t *testing.T) {
 
 func TestSet_CaseInsensitiveLookup(t *testing.T) {
 	tag := &Tag{}
-	tag.Set("Title", "first")
-	tag.Set("TITLE", "second") // should update, not add
+	_ = tag.Set("Title", "first")
+	_ = tag.Set("TITLE", "second") // should update, not add
 	if len(tag.Items) != 1 {
 		t.Errorf("Items = %d, want 1 (case-insensitive update)", len(tag.Items))
 	}
@@ -167,11 +167,11 @@ func TestRead_ReportsAPEv1AsUnsupported(t *testing.T) {
 	// Build a minimal footer with version=1000.
 	var footer bytes.Buffer
 	footer.Write(Preamble[:])
-	binary.Write(&footer, binary.LittleEndian, uint32(1000)) // APEv1
-	binary.Write(&footer, binary.LittleEndian, uint32(32))   // size
-	binary.Write(&footer, binary.LittleEndian, uint32(0))    // count
-	binary.Write(&footer, binary.LittleEndian, uint32(0))    // flags
-	footer.Write(make([]byte, 8))                            // reserved
+	_ = binary.Write(&footer, binary.LittleEndian, uint32(1000)) // APEv1
+	_ = binary.Write(&footer, binary.LittleEndian, uint32(32))   // size
+	_ = binary.Write(&footer, binary.LittleEndian, uint32(0))    // count
+	_ = binary.Write(&footer, binary.LittleEndian, uint32(0))    // flags
+	footer.Write(make([]byte, 8))                                // reserved
 	body := append([]byte("audio"), footer.Bytes()...)
 	if _, err := Read(bytes.NewReader(body)); !errors.Is(err, ErrUnsupportedVersion) {
 		t.Errorf("got %v, want ErrUnsupportedVersion", err)
@@ -193,8 +193,8 @@ func TestWriteFile_PreservesAudioAndID3v1(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tag.Set("Title", "new")
-	tag.Set("Artist", "added")
+	_ = tag.Set("Title", "new")
+	_ = tag.Set("Artist", "added")
 	if err := tag.WriteFile(p); err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +222,7 @@ func TestWriteFile_AppendsTagWhenAbsent(t *testing.T) {
 	audio := []byte("PURE_AUDIO_NO_TAG_AT_ALL")
 	p := writeTemp(t, audio)
 	tag := &Tag{HasHeader: true}
-	tag.Set("Title", "Brand New")
+	_ = tag.Set("Title", "Brand New")
 	if err := tag.WriteFile(p); err != nil {
 		t.Fatal(err)
 	}

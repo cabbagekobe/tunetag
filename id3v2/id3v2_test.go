@@ -38,38 +38,6 @@ func buildV23Tag(t *testing.T, padding int, flags Flags, frames []struct {
 	return out.Bytes()
 }
 
-func buildV24Tag(t *testing.T, padding int, flags Flags, frames []struct {
-	ID   string
-	Body []byte
-}) []byte {
-	t.Helper()
-	var fbuf bytes.Buffer
-	for _, f := range frames {
-		if len(f.ID) != 4 {
-			t.Fatalf("buildV24Tag: id %q must be 4 bytes", f.ID)
-		}
-		var hdr [10]byte
-		copy(hdr[0:4], f.ID)
-		sz, err := encodeSynchsafe(uint32(len(f.Body)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		copy(hdr[4:8], sz[:])
-		fbuf.Write(hdr[:])
-		fbuf.Write(f.Body)
-	}
-	if padding > 0 {
-		fbuf.Write(make([]byte, padding))
-	}
-	h := Header{Version: V24, Flags: flags, Size: uint32(fbuf.Len())}
-	var out bytes.Buffer
-	if err := h.writeTo(&out); err != nil {
-		t.Fatal(err)
-	}
-	out.Write(fbuf.Bytes())
-	return out.Bytes()
-}
-
 func TestRead_NoTag(t *testing.T) {
 	r := bytes.NewReader([]byte("ABCDEFGHIJ"))
 	if _, err := Read(r); !errors.Is(err, ErrNoTag) {
@@ -334,13 +302,13 @@ func TestRead_ExtendedHeaderSkipped_V23(t *testing.T) {
 	frameBody := []byte{0x00, 'X'}
 	var f bytes.Buffer
 	f.WriteString("TIT2")
-	binary.Write(&f, binary.BigEndian, uint32(len(frameBody)))
+	_ = binary.Write(&f, binary.BigEndian, uint32(len(frameBody)))
 	f.Write([]byte{0, 0})
 	f.Write(frameBody)
 
 	extPayload := []byte{0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
 	var body bytes.Buffer
-	binary.Write(&body, binary.BigEndian, uint32(len(extPayload)))
+	_ = binary.Write(&body, binary.BigEndian, uint32(len(extPayload)))
 	body.Write(extPayload)
 	body.Write(f.Bytes())
 
@@ -387,7 +355,7 @@ func TestRead_EmptyTagPaddingOnly(t *testing.T) {
 	// 1 KiB of padding, no frames. Must produce zero frames.
 	h := Header{Version: V23, Size: 1024}
 	var raw bytes.Buffer
-	h.writeTo(&raw)
+	_ = h.writeTo(&raw)
 	raw.Write(make([]byte, 1024))
 
 	tag, err := Read(&raw)

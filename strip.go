@@ -27,7 +27,7 @@ func Strip(path string) error {
 		return err
 	}
 	format, err := Detect(f)
-	f.Close()
+	_ = f.Close()
 	if err != nil {
 		return err
 	}
@@ -61,7 +61,7 @@ func stripID3v2(path string) error {
 	if err != nil {
 		return err
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 	t, err := id3v2.Read(src)
 	if err != nil {
 		return err
