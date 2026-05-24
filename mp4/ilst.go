@@ -223,8 +223,13 @@ func (l *Ilst) FirstFreeform(meanDomain, name string) *DataAtom {
 // (meanDomain, name) with one carrying a single data atom. Other
 // freeform items (different mean/name pairs) are left untouched.
 // Passing data=nil removes only the matching (mean, name) item, which
-// is equivalent to RemoveFreeform.
+// is equivalent to RemoveFreeform. An empty meanDomain or name is a
+// no-op, since the resulting item would be invalid per spec and
+// would fail at encode time.
 func (l *Ilst) SetFreeform(meanDomain, name string, data *DataAtom) {
+	if meanDomain == "" || name == "" {
+		return
+	}
 	l.RemoveFreeform(meanDomain, name)
 	if data == nil {
 		return

@@ -143,6 +143,73 @@ func TestIlst_FreeformRoundTripsThroughEncode(t *testing.T) {
 	}
 }
 
+func TestIlst_SetFreeform_EmptyInputsAreNoOp(t *testing.T) {
+	// Empty meanDomain or name must not store an item that would later
+	// fail at encode time, and must not delete unrelated freeforms.
+	cases := []struct {
+		desc, mean, name string
+	}{
+		{"empty mean", "", "initialkey"},
+		{"empty name", "com.apple.iTunes", ""},
+		{"both empty", "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.desc, func(t *testing.T) {
+			l := &Ilst{}
+			l.SetFreeform("com.apple.iTunes", "iTunNORM", makeUTF8Data(" 00000111"))
+			l.SetFreeform(c.mean, c.name, makeUTF8Data("8A"))
+			if n := len(l.Items); n != 1 {
+				t.Errorf("Items = %d, want 1 (no-op should neither add nor remove)", n)
+			}
+			if l.FirstFreeform("com.apple.iTunes", "iTunNORM") == nil {
+				t.Errorf("unrelated iTunNORM was removed")
+			}
+		})
+	}
+}
+
+func TestIlst_FirstFreeform_MissingReturnsNil(t *testing.T) {
+	// Empty Ilst.
+	l := &Ilst{}
+	if got := l.FirstFreeform("com.apple.iTunes", "initialkey"); got != nil {
+		t.Errorf("FirstFreeform on empty Ilst = %v, want nil", got)
+	}
+	// Different (mean, name) present — must not be returned for a
+	// non-matching lookup.
+	l.SetFreeform("com.apple.iTunes", "iTunNORM", makeUTF8Data(" 00000111"))
+	if got := l.FirstFreeform("com.apple.iTunes", "initialkey"); got != nil {
+		t.Errorf("FirstFreeform for missing (mean,name) = %v, want nil", got)
+	}
+	if got := l.FirstFreeform("com.example.other", "iTunNORM"); got != nil {
+		t.Errorf("FirstFreeform with wrong mean = %v, want nil", got)
+	}
+}
+
+func TestIlst_LegacyRemoveWipesAllFreeforms(t *testing.T) {
+	// Locks in the destructive behavior of Remove("----") that the
+	// godoc warns about: it deletes every freeform item regardless of
+	// (mean, name). Standard 4-char keys must be left alone.
+	l := &Ilst{}
+	l.SetTitle("Song")
+	l.SetFreeform("com.apple.iTunes", "initialkey", makeUTF8Data("8A"))
+	l.SetFreeform("com.apple.iTunes", "iTunNORM", makeUTF8Data(" 00000111"))
+
+	l.Remove("----")
+
+	if n := len(l.Items); n != 1 {
+		t.Errorf("Items = %d, want 1 (only Title should remain)", n)
+	}
+	if l.Title() != "Song" {
+		t.Errorf("Title = %q, want untouched", l.Title())
+	}
+	if got := l.FirstFreeform("com.apple.iTunes", "initialkey"); got != nil {
+		t.Errorf("initialkey survived Remove(\"----\"): %v", got)
+	}
+	if got := l.FirstFreeform("com.apple.iTunes", "iTunNORM"); got != nil {
+		t.Errorf("iTunNORM survived Remove(\"----\"): %v", got)
+	}
+}
+
 func TestIlst_SetTextEmptyRemoves(t *testing.T) {
 	l := &Ilst{}
 	l.SetTitle("hello")

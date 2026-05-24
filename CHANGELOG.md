@@ -19,7 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cannot specify the mean/name on write. The new methods leave
   unrelated freeform items alone and emit valid mean/name boxes.
   Their godoc and the existing `Set` / `Remove` / `First` comments
-  point callers to the right method.
+  point callers to the right method. `SetFreeform` treats an empty
+  `meanDomain` or `name` as a no-op, since the resulting item would
+  be invalid per spec and would fail at encode time.
 
 ## [0.1.3] - 2026-05-17
 
