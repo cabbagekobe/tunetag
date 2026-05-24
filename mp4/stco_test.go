@@ -18,7 +18,7 @@ func readSTCOOffsets(t *testing.T, p string) []uint32 {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	info, _ := f.Stat()
 	tops, err := scanTopLevel(f, info.Size())
 	if err != nil {
@@ -205,7 +205,7 @@ func readFirstChunkOffsets(t *testing.T, p string) ([]uint64, bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	info, _ := f.Stat()
 	tops, err := scanTopLevel(f, info.Size())
 	if err != nil {

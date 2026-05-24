@@ -328,7 +328,7 @@ func readAllTopLevelBoxes(path string) (*rawTopLevelSet, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
 		return nil, err
@@ -366,8 +366,8 @@ func (s *rawTopLevelSet) writeWithMoovReplaced(path string, newMoov []byte) erro
 	}
 	tmpPath := tmp.Name()
 	cleanup := func() {
-		tmp.Close()
-		os.Remove(tmpPath)
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
 	}
 
 	for i, b := range s.boxes {
@@ -392,11 +392,11 @@ func (s *rawTopLevelSet) writeWithMoovReplaced(path string, newMoov []byte) erro
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	return nil

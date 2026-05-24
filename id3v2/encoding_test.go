@@ -327,11 +327,11 @@ func TestEncoding_TerminatorLen(t *testing.T) {
 
 func TestEncoding_StringValues(t *testing.T) {
 	cases := map[Encoding]string{
-		EncISO88591:   "ISO-8859-1",
-		EncUTF16:      "UTF-16",
-		EncUTF16BE:    "UTF-16BE",
-		EncUTF8:       "UTF-8",
-		Encoding(99):  "Encoding(99)",
+		EncISO88591:  "ISO-8859-1",
+		EncUTF16:     "UTF-16",
+		EncUTF16BE:   "UTF-16BE",
+		EncUTF8:      "UTF-8",
+		Encoding(99): "Encoding(99)",
 	}
 	for e, want := range cases {
 		if got := e.String(); got != want {

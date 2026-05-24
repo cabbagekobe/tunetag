@@ -234,7 +234,7 @@ func ReadFile(path string) (*File, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return Read(f)
 }
 
@@ -326,8 +326,8 @@ func (f *File) WriteFile(path string) error {
 	}
 	tmpPath := tmp.Name()
 	cleanup := func() {
-		tmp.Close()
-		os.Remove(tmpPath)
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
 	}
 	if _, err := tmp.Write(out); err != nil {
 		cleanup()
@@ -338,11 +338,11 @@ func (f *File) WriteFile(path string) error {
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	return nil

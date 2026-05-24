@@ -127,8 +127,8 @@ func (d *DataAtom) TrackNumber() (track, total uint16, err error) {
 func makeTrackNumberData(number, total uint16) *DataAtom {
 	var b bytes.Buffer
 	b.Write(make([]byte, 2))
-	binary.Write(&b, binary.BigEndian, number)
-	binary.Write(&b, binary.BigEndian, total)
+	_ = binary.Write(&b, binary.BigEndian, number)
+	_ = binary.Write(&b, binary.BigEndian, total)
 	b.Write(make([]byte, 2))
 	return &DataAtom{TypeCode: DataTypeBinary, Payload: b.Bytes()}
 }

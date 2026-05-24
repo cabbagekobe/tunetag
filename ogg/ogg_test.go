@@ -33,9 +33,9 @@ func buildPage(serial uint32, seqNum uint32, headerType byte, packets ...[]byte)
 	out.WriteByte(0)          // version
 	out.WriteByte(headerType) // flags
 	out.Write(make([]byte, 8))
-	binary.Write(&out, binary.LittleEndian, serial)
-	binary.Write(&out, binary.LittleEndian, seqNum)
-	binary.Write(&out, binary.LittleEndian, uint32(0)) // CRC
+	_ = binary.Write(&out, binary.LittleEndian, serial)
+	_ = binary.Write(&out, binary.LittleEndian, seqNum)
+	_ = binary.Write(&out, binary.LittleEndian, uint32(0)) // CRC
 	out.WriteByte(byte(len(segs)))
 	out.Write(segs)
 	out.Write(body.Bytes())
@@ -222,9 +222,9 @@ func buildPageSplit(serial, seq uint32, flags byte, body []byte) []byte {
 	out.WriteByte(0)
 	out.WriteByte(flags)
 	out.Write(make([]byte, 8))
-	binary.Write(&out, binary.LittleEndian, serial)
-	binary.Write(&out, binary.LittleEndian, seq)
-	binary.Write(&out, binary.LittleEndian, uint32(0))
+	_ = binary.Write(&out, binary.LittleEndian, serial)
+	_ = binary.Write(&out, binary.LittleEndian, seq)
+	_ = binary.Write(&out, binary.LittleEndian, uint32(0))
 	out.WriteByte(byte(len(segs)))
 	out.Write(segs)
 	out.Write(body)

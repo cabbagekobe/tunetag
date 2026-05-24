@@ -23,6 +23,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `meanDomain` or `name` as a no-op, since the resulting item would
   be invalid per spec and would fail at encode time.
 
+### Changed
+
+- Internal lint cleanup across the repository (errcheck / staticcheck
+  / unused). In-place file writes (`mp4.File.overwriteIlstInPlace`
+  / `absorbWithFree` / `insertFreeAfterIlst`, `flac.File.writeMetadataInPlace`,
+  and `id3v2 overwriteInPlace`) now propagate the deferred `Close`
+  error to the caller via a named return when no earlier error was
+  reported. All other changes are presentation-only; public APIs and
+  observable behavior are unchanged.
+
 ## [0.1.3] - 2026-05-17
 
 ### Added

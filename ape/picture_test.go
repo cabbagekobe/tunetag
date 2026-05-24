@@ -7,7 +7,7 @@ import (
 
 func TestPicture_RoundTrip(t *testing.T) {
 	tag := &Tag{HasHeader: true}
-	tag.Set("Title", "x")
+	_ = tag.Set("Title", "x")
 	pic := &Picture{
 		Filename: "cover.jpg",
 		Data:     []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x42, 0x42},
@@ -36,7 +36,7 @@ func TestPicture_RoundTrip(t *testing.T) {
 
 func TestRemovePictures(t *testing.T) {
 	tag := &Tag{HasHeader: true}
-	tag.Set("Title", "keep me")
+	_ = tag.Set("Title", "keep me")
 	_ = tag.AddPicture(&Picture{Filename: "a.jpg", Data: []byte{0xFF, 0xD8}})
 	_ = tag.AddPictureAs(KeyCoverArtBack, &Picture{Filename: "b.jpg", Data: []byte{0xFF, 0xD8}})
 	tag.RemovePictures()

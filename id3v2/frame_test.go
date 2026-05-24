@@ -161,11 +161,11 @@ func TestPictureFrame_V22PIC_Read(t *testing.T) {
 	// PIC body: enc(1) + format(3 chars: "JPG") + type(1) + desc(NUL) + data
 	picData := []byte{0xFF, 0xD8, 'D', 'A', 'T', 'A'}
 	body := append([]byte{
-		0x00,                // encoding = Latin-1
-		'J', 'P', 'G',       // image format
-		0x03,                // picture type = CoverFront
-		'C', 'o', 'v', 'r',  // description
-		0x00,                // null terminator
+		0x00,          // encoding = Latin-1
+		'J', 'P', 'G', // image format
+		0x03,               // picture type = CoverFront
+		'C', 'o', 'v', 'r', // description
+		0x00, // null terminator
 	}, picData...)
 
 	var fbuf bytes.Buffer
@@ -619,13 +619,13 @@ func TestChooseEncoding_V24Always(t *testing.T) {
 func TestRead_FrameSizeBeyondPayload(t *testing.T) {
 	var fbuf bytes.Buffer
 	fbuf.WriteString("TIT2")
-	binary.Write(&fbuf, binary.BigEndian, uint32(0xFFFF))
+	_ = binary.Write(&fbuf, binary.BigEndian, uint32(0xFFFF))
 	fbuf.Write([]byte{0, 0})
 	fbuf.WriteByte(0x00)
 
 	h := Header{Version: V23, Size: uint32(fbuf.Len())}
 	var raw bytes.Buffer
-	h.writeTo(&raw)
+	_ = h.writeTo(&raw)
 	raw.Write(fbuf.Bytes())
 
 	if _, err := Read(&raw); err == nil {
@@ -641,7 +641,7 @@ func TestRead_V24FrameSizeWithTopBit(t *testing.T) {
 
 	h := Header{Version: V24, Size: uint32(fbuf.Len())}
 	var raw bytes.Buffer
-	h.writeTo(&raw)
+	_ = h.writeTo(&raw)
 	raw.Write(fbuf.Bytes())
 
 	if _, err := Read(&raw); err == nil {
@@ -653,14 +653,14 @@ func TestRead_NonZeroBytesInsidePadding(t *testing.T) {
 	var fbuf bytes.Buffer
 	body := []byte{0x00, 'A'}
 	fbuf.WriteString("TIT2")
-	binary.Write(&fbuf, binary.BigEndian, uint32(len(body)))
+	_ = binary.Write(&fbuf, binary.BigEndian, uint32(len(body)))
 	fbuf.Write([]byte{0, 0})
 	fbuf.Write(body)
 	fbuf.Write([]byte{0, 0, 0, 0, 0xAA, 0, 0, 0})
 
 	h := Header{Version: V23, Size: uint32(fbuf.Len())}
 	var raw bytes.Buffer
-	h.writeTo(&raw)
+	_ = h.writeTo(&raw)
 	raw.Write(fbuf.Bytes())
 
 	if _, err := Read(&raw); err == nil {
@@ -860,7 +860,7 @@ func encodeOneFrame(t *testing.T, v Version, id string, body []byte) []byte {
 		sz, _ := encodeSynchsafe(uint32(len(body)))
 		fbuf.Write(sz[:])
 	} else {
-		binary.Write(&fbuf, binary.BigEndian, uint32(len(body)))
+		_ = binary.Write(&fbuf, binary.BigEndian, uint32(len(body)))
 	}
 	fbuf.Write([]byte{0, 0})
 	fbuf.Write(body)

@@ -182,7 +182,7 @@ func TestWriteFile_ReplacesExistingTagInPlace(t *testing.T) {
 	if err := (&Tag{Title: "OLD", Genre: GenreNone}).Encode(f); err != nil {
 		t.Fatal(err)
 	}
-	f.Close()
+	_ = f.Close()
 
 	before, err := os.Stat(p)
 	if err != nil {
@@ -211,7 +211,7 @@ func TestWriteFile_ReplacesExistingTagInPlace(t *testing.T) {
 
 	body := make([]byte, len(audio))
 	rf, _ := os.Open(p)
-	defer rf.Close()
+	defer func() { _ = rf.Close() }()
 	if _, err := rf.Read(body); err != nil {
 		t.Fatal(err)
 	}
@@ -226,9 +226,9 @@ func TestStripFile(t *testing.T) {
 	audio := []byte("AUDIO")
 
 	f, _ := os.Create(p)
-	f.Write(audio)
-	(&Tag{Title: "X", Genre: GenreNone}).Encode(f)
-	f.Close()
+	_, _ = f.Write(audio)
+	_ = (&Tag{Title: "X", Genre: GenreNone}).Encode(f)
+	_ = f.Close()
 
 	if err := StripFile(p); err != nil {
 		t.Fatal(err)

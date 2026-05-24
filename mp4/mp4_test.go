@@ -455,9 +455,9 @@ func buildMP4WithTwoTraks(t *testing.T, stco1, stco2 []uint32) []byte {
 func buildTrakWithStcoValues(offsets []uint32) []byte {
 	var stco bytes.Buffer
 	stco.Write([]byte{0x00, 0x00, 0x00, 0x00})
-	binary.Write(&stco, binary.BigEndian, uint32(len(offsets)))
+	_ = binary.Write(&stco, binary.BigEndian, uint32(len(offsets)))
 	for _, o := range offsets {
-		binary.Write(&stco, binary.BigEndian, o)
+		_ = binary.Write(&stco, binary.BigEndian, o)
 	}
 	stbl := boxFromBody("stbl", boxFromBody("stco", stco.Bytes()))
 	minf := boxFromBody("minf", stbl)
@@ -471,7 +471,7 @@ func readAllSTCOValues(t *testing.T, p string) [][]uint32 {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	info, _ := f.Stat()
 	tops, err := scanTopLevel(f, info.Size())
 	if err != nil {

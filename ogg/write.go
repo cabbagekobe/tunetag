@@ -40,7 +40,7 @@ func (f *File) WriteFile(path string) error {
 	if err != nil {
 		return err
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 
 	layout, err := scanLayout(src, f.Serial)
 	if err != nil {
@@ -82,8 +82,8 @@ func (f *File) WriteFile(path string) error {
 	}
 	tmpPath := tmp.Name()
 	cleanup := func() {
-		tmp.Close()
-		os.Remove(tmpPath)
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
 	}
 	// 1. Copy everything up to (but not including) the first
 	//    comment page.
@@ -118,15 +118,15 @@ func (f *File) WriteFile(path string) error {
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	if err := src.Close(); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	return nil

@@ -117,7 +117,7 @@ func ReadFile(path string) (*Tag, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return Read(f)
 }
 
@@ -385,7 +385,7 @@ func (t *Tag) WriteFile(path string) error {
 	if err != nil {
 		return err
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 	end, err := src.Seek(0, io.SeekEnd)
 	if err != nil {
 		return err
@@ -409,8 +409,8 @@ func (t *Tag) WriteFile(path string) error {
 	}
 	tmpPath := tmp.Name()
 	cleanup := func() {
-		tmp.Close()
-		os.Remove(tmpPath)
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
 	}
 	if _, err := io.CopyN(tmp, src, audioEnd); err != nil {
 		cleanup()
@@ -431,15 +431,15 @@ func (t *Tag) WriteFile(path string) error {
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	if err := src.Close(); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	return nil

@@ -168,8 +168,8 @@ func TestVC_RoundTripPreservesCase(t *testing.T) {
 
 func TestRead_VorbisCommentCountTooLarge(t *testing.T) {
 	var body bytes.Buffer
-	binary.Write(&body, binary.LittleEndian, uint32(0)) // vendor len
-	binary.Write(&body, binary.LittleEndian, uint32(1_000_000))
+	_ = binary.Write(&body, binary.LittleEndian, uint32(0)) // vendor len
+	_ = binary.Write(&body, binary.LittleEndian, uint32(1_000_000))
 	if _, err := parseVorbisComment(body.Bytes()); err == nil {
 		t.Fatal("expected error: comment count exceeds body")
 	}
@@ -177,9 +177,9 @@ func TestRead_VorbisCommentCountTooLarge(t *testing.T) {
 
 func TestRead_VorbisCommentStringLenOverflow(t *testing.T) {
 	var body bytes.Buffer
-	binary.Write(&body, binary.LittleEndian, uint32(0)) // vendor len
-	binary.Write(&body, binary.LittleEndian, uint32(1)) // 1 comment
-	binary.Write(&body, binary.LittleEndian, uint32(0xFFFFFFFF))
+	_ = binary.Write(&body, binary.LittleEndian, uint32(0)) // vendor len
+	_ = binary.Write(&body, binary.LittleEndian, uint32(1)) // 1 comment
+	_ = binary.Write(&body, binary.LittleEndian, uint32(0xFFFFFFFF))
 	if _, err := parseVorbisComment(body.Bytes()); err == nil {
 		t.Fatal("expected error: comment length exceeds body")
 	}
@@ -214,7 +214,7 @@ func TestParseVorbisComment_TruncatedVendorLen(t *testing.T) {
 
 func TestParseVorbisComment_VendorLenExceedsBody(t *testing.T) {
 	var body bytes.Buffer
-	binary.Write(&body, binary.LittleEndian, uint32(100))
+	_ = binary.Write(&body, binary.LittleEndian, uint32(100))
 	body.WriteString("x")
 	if _, err := parseVorbisComment(body.Bytes()); err == nil {
 		t.Fatal("expected error: vendor length exceeds body")
@@ -223,7 +223,7 @@ func TestParseVorbisComment_VendorLenExceedsBody(t *testing.T) {
 
 func TestParseVorbisComment_TruncatedBetweenVendorAndCount(t *testing.T) {
 	var body bytes.Buffer
-	binary.Write(&body, binary.LittleEndian, uint32(0))
+	_ = binary.Write(&body, binary.LittleEndian, uint32(0))
 	body.WriteByte(0)
 	if _, err := parseVorbisComment(body.Bytes()); err == nil {
 		t.Fatal("expected error: truncated before comment count")
@@ -232,9 +232,9 @@ func TestParseVorbisComment_TruncatedBetweenVendorAndCount(t *testing.T) {
 
 func TestParseVorbisComment_TruncatedAtCommentI(t *testing.T) {
 	var body bytes.Buffer
-	binary.Write(&body, binary.LittleEndian, uint32(0))
-	binary.Write(&body, binary.LittleEndian, uint32(2))
-	binary.Write(&body, binary.LittleEndian, uint32(1))
+	_ = binary.Write(&body, binary.LittleEndian, uint32(0))
+	_ = binary.Write(&body, binary.LittleEndian, uint32(2))
+	_ = binary.Write(&body, binary.LittleEndian, uint32(1))
 	body.WriteByte('A')
 	if _, err := parseVorbisComment(body.Bytes()); err == nil {
 		t.Fatal("expected error: truncated at comment 1")

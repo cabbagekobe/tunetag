@@ -28,10 +28,10 @@ type File struct {
 	// Indices within rawMoov pointing at the udta -> meta -> ilst
 	// chain, filled in by readMoovStructure(). When ilstFound is false
 	// the moov has no metadata yet.
-	udtaOff, udtaLen   int
-	metaOff, metaLen   int
-	ilstOff, ilstLen   int
-	ilstFound          bool
+	udtaOff, udtaLen int
+	metaOff, metaLen int
+	ilstOff, ilstLen int
+	ilstFound        bool
 
 	// freeOff / freeLen point at a sibling `free` (or `skip`) atom
 	// inside moov that Tier 1 writes can absorb space from. Both are
@@ -50,7 +50,7 @@ func Read(path string) (*File, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
 		return nil, err
@@ -97,9 +97,8 @@ func readFromReaderAt(r io.ReaderAt, size int64, path string) (*File, error) {
 	if err := out.parseMoov(); err != nil {
 		return nil, err
 	}
-	if out.fragmented {
-		// Read still succeeds; only writes are blocked.
-	}
+	// Read still succeeds for fragmented streams; only writes are
+	// blocked (checked later by the write path via out.fragmented).
 	return out, nil
 }
 
@@ -246,7 +245,7 @@ func (f *File) WriteFile(path string) error {
 	return f.rewriteFile(path)
 }
 
-func (f *File) overwriteIlstInPlace(path string, newIlstBody []byte) error {
+func (f *File) overwriteIlstInPlace(path string, newIlstBody []byte) (err error) {
 	// Build new ilst box (header + body) and overwrite at f.ilstOff
 	// in the file. ilstOff is an offset into the moov body, so the
 	// absolute file offset is moovBodyOffset + ilstOff. We compute it
@@ -259,7 +258,11 @@ func (f *File) overwriteIlstInPlace(path string, newIlstBody []byte) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func() {
+		if cerr := out.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 	if _, err := out.Seek(moovAbs+int64(f.ilstOff), io.SeekStart); err != nil {
 		return err
 	}
@@ -269,7 +272,7 @@ func (f *File) overwriteIlstInPlace(path string, newIlstBody []byte) error {
 	return nil
 }
 
-func (f *File) absorbWithFree(path string, newIlstBody []byte, delta int) error {
+func (f *File) absorbWithFree(path string, newIlstBody []byte, delta int) (err error) {
 	moovAbs, err := f.absoluteMoovBodyOffset(path)
 	if err != nil {
 		return err
@@ -278,7 +281,11 @@ func (f *File) absorbWithFree(path string, newIlstBody []byte, delta int) error 
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func() {
+		if cerr := out.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
 	// Write new ilst at its current offset (moov-relative).
 	if _, err := out.Seek(moovAbs+int64(f.ilstOff), io.SeekStart); err != nil {
@@ -300,7 +307,7 @@ func (f *File) absorbWithFree(path string, newIlstBody []byte, delta int) error 
 	return nil
 }
 
-func (f *File) insertFreeAfterIlst(path string, newIlstBody []byte, freeTotal int) error {
+func (f *File) insertFreeAfterIlst(path string, newIlstBody []byte, freeTotal int) (err error) {
 	moovAbs, err := f.absoluteMoovBodyOffset(path)
 	if err != nil {
 		return err
@@ -309,7 +316,11 @@ func (f *File) insertFreeAfterIlst(path string, newIlstBody []byte, freeTotal in
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func() {
+		if cerr := out.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 	if _, err := out.Seek(moovAbs+int64(f.ilstOff), io.SeekStart); err != nil {
 		return err
 	}
@@ -330,7 +341,7 @@ func (f *File) absoluteMoovBodyOffset(path string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 	info, err := src.Stat()
 	if err != nil {
 		return 0, err
@@ -364,8 +375,8 @@ func (f *File) rewriteAtomic(path string, build func() ([]byte, error)) error {
 	}
 	tmpPath := tmp.Name()
 	cleanup := func() {
-		tmp.Close()
-		os.Remove(tmpPath)
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
 	}
 	if _, err := tmp.Write(body); err != nil {
 		cleanup()
@@ -376,7 +387,7 @@ func (f *File) rewriteAtomic(path string, build func() ([]byte, error)) error {
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	return os.Rename(tmpPath, path)

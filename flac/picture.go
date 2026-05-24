@@ -11,14 +11,14 @@ import (
 // values match the 21 ID3v2 APIC types and the tunetag.PictureType
 // enum, so block contents can be moved between formats losslessly.
 type Picture struct {
-	PictureType    uint32
-	MIME           string
-	Description    string
-	Width          uint32
-	Height         uint32
-	Depth          uint32 // bits per pixel
-	IndexedColors  uint32 // 0 for non-indexed images
-	Data           []byte
+	PictureType   uint32
+	MIME          string
+	Description   string
+	Width         uint32
+	Height        uint32
+	Depth         uint32 // bits per pixel
+	IndexedColors uint32 // 0 for non-indexed images
+	Data          []byte
 }
 
 func (p *Picture) Type() uint8 { return BlockPicture }

@@ -108,7 +108,7 @@ func TestWriteFile_RoundTripsID3v2(t *testing.T) {
 	v2 := &id3v2.Tag{Version: id3v2.V24, Padding: 0}
 	v2.SetTitle("Old")
 	var buf bytes.Buffer
-	v2.Encode(&buf)
+	_ = v2.Encode(&buf)
 	audio := append([]byte{0xFF, 0xF1, 0x50, 0x80}, make([]byte, 64)...)
 	buf.Write(audio)
 	p := writeTemp(t, buf.Bytes())

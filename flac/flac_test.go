@@ -149,7 +149,7 @@ func TestRead_MultipleVorbisCommentBlocks(t *testing.T) {
 	buf.Write(Magic[:])
 	for i, b := range []Block{si, v1, v2} {
 		body, _ := b.Encode()
-		writeBlockHeader(&buf, b.Type(), i == 2, uint32(len(body)))
+		_ = writeBlockHeader(&buf, b.Type(), i == 2, uint32(len(body)))
 		buf.Write(body)
 	}
 	f, err := Read(bytes.NewReader(buf.Bytes()))

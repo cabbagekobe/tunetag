@@ -49,27 +49,27 @@ func (f Format) String() string {
 type PictureType uint8
 
 const (
-	PictureOther             PictureType = 0
-	PictureFileIcon32        PictureType = 1
-	PictureFileIcon          PictureType = 2
-	PictureCoverFront        PictureType = 3
-	PictureCoverBack         PictureType = 4
-	PictureLeafletPage       PictureType = 5
-	PictureMedia             PictureType = 6
-	PictureLeadArtist        PictureType = 7
-	PictureArtist            PictureType = 8
-	PictureConductor         PictureType = 9
-	PictureBand              PictureType = 10
-	PictureComposer          PictureType = 11
-	PictureLyricist          PictureType = 12
-	PictureRecordingLocation PictureType = 13
-	PictureDuringRecording   PictureType = 14
-	PictureDuringPerformance PictureType = 15
-	PictureMovieScreenshot   PictureType = 16
+	PictureOther              PictureType = 0
+	PictureFileIcon32         PictureType = 1
+	PictureFileIcon           PictureType = 2
+	PictureCoverFront         PictureType = 3
+	PictureCoverBack          PictureType = 4
+	PictureLeafletPage        PictureType = 5
+	PictureMedia              PictureType = 6
+	PictureLeadArtist         PictureType = 7
+	PictureArtist             PictureType = 8
+	PictureConductor          PictureType = 9
+	PictureBand               PictureType = 10
+	PictureComposer           PictureType = 11
+	PictureLyricist           PictureType = 12
+	PictureRecordingLocation  PictureType = 13
+	PictureDuringRecording    PictureType = 14
+	PictureDuringPerformance  PictureType = 15
+	PictureMovieScreenshot    PictureType = 16
 	PictureBrightColouredFish PictureType = 17
-	PictureIllustration      PictureType = 18
-	PictureBandLogo          PictureType = 19
-	PicturePublisherLogo     PictureType = 20
+	PictureIllustration       PictureType = 18
+	PictureBandLogo           PictureType = 19
+	PicturePublisherLogo      PictureType = 20
 )
 
 // Picture is an embedded image attached to an audio file.

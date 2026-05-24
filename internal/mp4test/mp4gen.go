@@ -38,8 +38,8 @@ func concat(chunks ...[]byte) []byte {
 // data builds the body of a "data" atom.
 func data(typeCode uint32, payload []byte) []byte {
 	var b bytes.Buffer
-	binary.Write(&b, binary.BigEndian, typeCode)
-	binary.Write(&b, binary.BigEndian, uint32(0)) // locale
+	_ = binary.Write(&b, binary.BigEndian, typeCode)
+	_ = binary.Write(&b, binary.BigEndian, uint32(0)) // locale
 	b.Write(payload)
 	return b.Bytes()
 }
@@ -90,13 +90,13 @@ func BuildMinimal(opt MinimalOptions) []byte {
 
 	// hdlr inside meta: minimal valid handler.
 	hdlrBody := concat(
-		[]byte{0x00, 0x00, 0x00, 0x00},               // version+flags
-		[]byte{0x00, 0x00, 0x00, 0x00},               // pre_defined
-		[]byte("mdir"),                                // handler_type ("mdir")
-		[]byte{0x00, 0x00, 0x00, 0x00},               // reserved[0]
-		[]byte("appl"),                                // reserved[1] (any 4 bytes)
-		[]byte{0x00, 0x00, 0x00, 0x00},               // reserved[2]
-		[]byte{0x00},                                  // empty name (null-terminated)
+		[]byte{0x00, 0x00, 0x00, 0x00}, // version+flags
+		[]byte{0x00, 0x00, 0x00, 0x00}, // pre_defined
+		[]byte("mdir"),                 // handler_type ("mdir")
+		[]byte{0x00, 0x00, 0x00, 0x00}, // reserved[0]
+		[]byte("appl"),                 // reserved[1] (any 4 bytes)
+		[]byte{0x00, 0x00, 0x00, 0x00}, // reserved[2]
+		[]byte{0x00},                   // empty name (null-terminated)
 	)
 	hdlr := box("hdlr", hdlrBody)
 
@@ -118,9 +118,9 @@ func BuildMinimal(opt MinimalOptions) []byte {
 	moov := box("moov", moovChildren)
 
 	ftyp := box("ftyp", concat(
-		[]byte("M4A "),                          // major_brand
-		[]byte{0x00, 0x00, 0x00, 0x00},          // minor_version
-		[]byte("M4A mp42isom"),                   // compatible_brands
+		[]byte("M4A "),                 // major_brand
+		[]byte{0x00, 0x00, 0x00, 0x00}, // minor_version
+		[]byte("M4A mp42isom"),         // compatible_brands
 	))
 
 	if opt.MdatBefore {
@@ -135,9 +135,9 @@ func BuildMinimal(opt MinimalOptions) []byte {
 func buildTrakWithStco(offsets []uint32) []byte {
 	var stco bytes.Buffer
 	stco.Write([]byte{0x00, 0x00, 0x00, 0x00}) // version+flags
-	binary.Write(&stco, binary.BigEndian, uint32(len(offsets)))
+	_ = binary.Write(&stco, binary.BigEndian, uint32(len(offsets)))
 	for _, o := range offsets {
-		binary.Write(&stco, binary.BigEndian, o)
+		_ = binary.Write(&stco, binary.BigEndian, o)
 	}
 	stbl := box("stbl", box("stco", stco.Bytes()))
 	minf := box("minf", stbl)
