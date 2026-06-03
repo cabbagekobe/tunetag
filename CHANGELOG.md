@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `flac.parseVorbisComment` rejects Vorbis Comment blocks whose
+  declared comment count cannot fit in the remaining body, so a
+  hostile input can no longer cause the parser to allocate
+  multi-GiB slices via `make([]string, 0, count)`. This was
+  failing the daily `FuzzReadFLAC` GitHub Actions job with
+  "fuzzing process hung or terminated unexpectedly" since
+  2026-05-24; the same input now returns an error instead.
+
 ## [0.1.4] - 2026-05-24
 
 ### Added

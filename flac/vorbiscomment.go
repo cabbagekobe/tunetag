@@ -80,6 +80,12 @@ func parseVorbisComment(body []byte) (*VorbisComment, error) {
 	}
 	count := binary.LittleEndian.Uint32(body[pos : pos+4])
 	pos += 4
+	// Each comment carries at least a 4-byte length prefix, so a
+	// count that cannot fit in the remaining body is invalid. Reject
+	// early to avoid allocating gigabytes for attacker-controlled values.
+	if int64(count)*4 > int64(len(body)-pos) {
+		return nil, fmt.Errorf("flac: VORBIS_COMMENT count %d exceeds body", count)
+	}
 	comments := make([]string, 0, count)
 	for i := uint32(0); i < count; i++ {
 		if pos+4 > len(body) {
