@@ -166,12 +166,44 @@ func TestVC_RoundTripPreservesCase(t *testing.T) {
 
 // --- parseVorbisComment defensive ---------------------------------
 
-func TestRead_VorbisCommentCountTooLarge(t *testing.T) {
+func TestParseVorbisComment_CountOverflowDoesNotAllocate(t *testing.T) {
+	// Regression: a count of 0xFFFFFFFF used to flow into
+	// make([]string, 0, count) and try to allocate ~32 GiB, which
+	// crashed Go fuzz workers with "hung or terminated unexpectedly".
+	var body bytes.Buffer
+	_ = binary.Write(&body, binary.LittleEndian, uint32(0))
+	_ = binary.Write(&body, binary.LittleEndian, uint32(0xFFFFFFFF))
+	if _, err := parseVorbisComment(body.Bytes()); err == nil {
+		t.Fatal("expected error: comment count overflow")
+	}
+}
+
+func TestParseVorbisComment_CountBoundaryFits(t *testing.T) {
+	// count*4 == remaining bytes: two empty comments fit exactly.
+	// Guards against an off-by-one tightening of the count check.
 	var body bytes.Buffer
 	_ = binary.Write(&body, binary.LittleEndian, uint32(0)) // vendor len
-	_ = binary.Write(&body, binary.LittleEndian, uint32(1_000_000))
+	_ = binary.Write(&body, binary.LittleEndian, uint32(2)) // 2 comments
+	_ = binary.Write(&body, binary.LittleEndian, uint32(0)) // comment 0 len
+	_ = binary.Write(&body, binary.LittleEndian, uint32(0)) // comment 1 len
+	vc, err := parseVorbisComment(body.Bytes())
+	if err != nil {
+		t.Fatalf("expected success at exact boundary, got %v", err)
+	}
+	if len(vc.Comments) != 2 {
+		t.Fatalf("Comments = %d, want 2", len(vc.Comments))
+	}
+}
+
+func TestParseVorbisComment_CountBoundaryJustOver(t *testing.T) {
+	// count*4 == remaining + 1: should be rejected by the early guard.
+	var body bytes.Buffer
+	_ = binary.Write(&body, binary.LittleEndian, uint32(0)) // vendor len
+	_ = binary.Write(&body, binary.LittleEndian, uint32(3)) // 3 comments
+	_ = binary.Write(&body, binary.LittleEndian, uint32(0)) // only 2 length prefixes follow
+	_ = binary.Write(&body, binary.LittleEndian, uint32(0))
 	if _, err := parseVorbisComment(body.Bytes()); err == nil {
-		t.Fatal("expected error: comment count exceeds body")
+		t.Fatal("expected error: comment count exceeds body by one entry")
 	}
 }
 
