@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failing the daily `FuzzReadFLAC` GitHub Actions job with
   "fuzzing process hung or terminated unexpectedly" since
   2026-05-24; the same input now returns an error instead.
+- `mp4.readBoxHeader` rejects box headers whose declared size
+  (32-bit or 64-bit largesize) exceeds the remaining file bytes,
+  so a hostile MP4 can no longer make the reader allocate
+  multi-GiB slices via `make([]byte, BodyLen)` in `readBoxBody`.
+  This was failing the daily `FuzzReadMP4` GitHub Actions job
+  with exit code 137 (SIGKILL / OOM) since 2026-06-03; the same
+  input now returns an error instead.
 
 ## [0.1.4] - 2026-05-24
 

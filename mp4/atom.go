@@ -82,10 +82,16 @@ func readBoxHeader(r io.ReaderAt, off, fileSize int64) (Box, error) {
 		if totalSize < 16 {
 			return Box{}, fmt.Errorf("mp4: box at %d: largesize %d < 16", off, totalSize)
 		}
+		if totalSize > uint64(fileSize-off) {
+			return Box{}, fmt.Errorf("mp4: box at %d: largesize %d exceeds file size", off, totalSize)
+		}
 	default:
 		totalSize = uint64(rawSize)
 		if totalSize < 8 {
 			return Box{}, fmt.Errorf("mp4: box at %d: size %d < 8", off, totalSize)
+		}
+		if totalSize > uint64(fileSize-off) {
+			return Box{}, fmt.Errorf("mp4: box at %d: size %d exceeds file size", off, totalSize)
 		}
 	}
 	return Box{

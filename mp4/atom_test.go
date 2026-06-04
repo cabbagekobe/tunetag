@@ -38,12 +38,48 @@ func TestReadBoxHeader_LargeSize(t *testing.T) {
 	binary.BigEndian.PutUint32(hdr[0:4], 1)
 	copy(hdr[4:8], "abcd")
 	binary.BigEndian.PutUint64(hdr[8:16], 32)
-	b, err := readBoxHeader(byteReaderAt(hdr[:]), 0, 16)
+	b, err := readBoxHeader(byteReaderAt(hdr[:]), 0, 32)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if b.Size != 32 || b.HeaderSize != 16 {
 		t.Errorf("got size=%d header=%d, want 32/16", b.Size, b.HeaderSize)
+	}
+}
+
+// Regression for daily FuzzReadMP4 OOM: a 32-bit size that points
+// past the end of the file used to flow into make([]byte, ~4 GiB)
+// in readBoxBody and SIGKILL fuzz workers.
+func TestReadBoxHeader_SizeExceedsFileRejected(t *testing.T) {
+	hdr := []byte{0xFF, 0xFF, 0xFF, 0xFF, 'm', 'o', 'o', 'v'}
+	if _, err := readBoxHeader(byteReaderAt(hdr), 0, int64(len(hdr))); err == nil {
+		t.Fatal("expected error: 32-bit size exceeds file")
+	}
+}
+
+// Same regression on the 64-bit largesize path: the 8-byte suffix
+// is fully attacker-controlled and must be bounded by the input.
+func TestReadBoxHeader_LargesizeExceedsFileRejected(t *testing.T) {
+	hdr := []byte{
+		0, 0, 0, 1, 'f', 'r', 'e', 'e',
+		0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF,
+	}
+	if _, err := readBoxHeader(byteReaderAt(hdr), 0, int64(len(hdr))); err == nil {
+		t.Fatal("expected error: largesize exceeds file")
+	}
+}
+
+// Boundary case: size == fileSize-off is the largest legal value;
+// must still parse. Guards against an off-by-one tightening of the
+// guard above.
+func TestReadBoxHeader_SizeAtBoundaryAccepted(t *testing.T) {
+	hdr := []byte{0, 0, 0, 8, 'f', 'r', 'e', 'e'}
+	b, err := readBoxHeader(byteReaderAt(hdr), 0, int64(len(hdr)))
+	if err != nil {
+		t.Fatalf("expected success at boundary, got %v", err)
+	}
+	if b.Size != 8 || b.BodyLen != 0 {
+		t.Errorf("Box = %+v, want Size=8 BodyLen=0", b)
 	}
 }
 
