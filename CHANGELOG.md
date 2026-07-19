@@ -7,8 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-07-19
+
 ### Fixed
 
+- The AIFF and WAV encoders compare the encoded body length against
+  the 4 GiB `uint32` limit as `uint64` instead of `int(^uint32(0))`.
+  The old conversion overflowed at compile time on 32-bit targets
+  (e.g. `GOARCH=arm`, ARMv6), breaking the build; the check now
+  compiles everywhere while preserving the 4 GiB limit on 64-bit.
 - `flac.parseVorbisComment` rejects Vorbis Comment blocks whose
   declared comment count cannot fit in the remaining body, so a
   hostile input can no longer cause the parser to allocate
@@ -238,7 +245,10 @@ Initial public release.
 - **Tests**: extensive unit coverage including round-trip,
   defensive parsing, fuzz seeds, and per-package benchmarks.
 
-[Unreleased]: https://github.com/cabbagekobe/tunetag/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/cabbagekobe/tunetag/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/cabbagekobe/tunetag/releases/tag/v0.1.5
+[0.1.4]: https://github.com/cabbagekobe/tunetag/releases/tag/v0.1.4
+[0.1.3]: https://github.com/cabbagekobe/tunetag/releases/tag/v0.1.3
 [0.1.2]: https://github.com/cabbagekobe/tunetag/releases/tag/v0.1.2
 [0.1.1]: https://github.com/cabbagekobe/tunetag/releases/tag/v0.1.1
 [0.1.0]: https://github.com/cabbagekobe/tunetag/releases/tag/v0.1.0
