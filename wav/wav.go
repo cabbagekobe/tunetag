@@ -377,7 +377,7 @@ func (f *File) encode() ([]byte, error) {
 	}
 	// RIFF wrapper: "RIFF" + uint32 size + WAVE-prefixed payload.
 	// The size field counts everything after itself.
-	if inner.Len() > int(^uint32(0)) {
+	if uint64(inner.Len()) > uint64(^uint32(0)) {
 		return nil, errors.New("wav: encoded body exceeds 4 GiB; RF64 required")
 	}
 	var out bytes.Buffer

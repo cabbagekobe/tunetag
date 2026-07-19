@@ -302,7 +302,7 @@ func (f *File) encode() ([]byte, error) {
 			inner.WriteByte(0)
 		}
 	}
-	if inner.Len() > int(^uint32(0)) {
+	if uint64(inner.Len()) > uint64(^uint32(0)) {
 		return nil, errors.New("aiff: encoded body exceeds 4 GiB")
 	}
 	var out bytes.Buffer
