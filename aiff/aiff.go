@@ -238,11 +238,10 @@ func (f *File) WriteFile(path string) error {
 	if err != nil {
 		return err
 	}
-	defer closeSrc()
-
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".tunetag-aiff-*.tmp")
 	if err != nil {
+		closeSrc()
 		return err
 	}
 	tmpPath := tmp.Name()
@@ -250,7 +249,12 @@ func (f *File) WriteFile(path string) error {
 		_ = tmp.Close()
 		_ = os.Remove(tmpPath)
 	}
-	if err := f.encodeTo(tmp, src); err != nil {
+	err = f.encodeTo(tmp, src)
+	// The source is only read during encodeTo; close it before the
+	// rename below — Windows refuses to replace a file that still
+	// has an open handle.
+	closeSrc()
+	if err != nil {
 		cleanup()
 		return err
 	}
