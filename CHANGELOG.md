@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-21
+
 ### Added
 
 - Fuzz targets `FuzzReadWAV` and `FuzzReadAIFF` covering the
@@ -273,7 +275,8 @@ Initial public release.
 - **Tests**: extensive unit coverage including round-trip,
   defensive parsing, fuzz seeds, and per-package benchmarks.
 
-[Unreleased]: https://github.com/cabbagekobe/tunetag/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/cabbagekobe/tunetag/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/cabbagekobe/tunetag/releases/tag/v0.2.0
 [0.1.5]: https://github.com/cabbagekobe/tunetag/releases/tag/v0.1.5
 [0.1.4]: https://github.com/cabbagekobe/tunetag/releases/tag/v0.1.4
 [0.1.3]: https://github.com/cabbagekobe/tunetag/releases/tag/v0.1.3
