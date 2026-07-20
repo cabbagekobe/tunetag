@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Fuzz targets `FuzzReadWAV` and `FuzzReadAIFF` covering the
+  rewritten seek-based parsers (and the streaming re-encode path),
+  wired into the nightly fuzz workflow alongside the existing
+  ID3v2 / FLAC / MP4 targets.
+
+### Changed
+
+- **wav, aiff: `Read` no longer buffers audio chunks in memory.**
+  Non-metadata chunks (`data`, `SSND`, `fmt `, …) are skipped via
+  `Seek` and remembered by offset/size; `WriteFile` streams their
+  bytes from the original source. Tag-reading a 300 MB WAV
+  recording previously allocated ~300 MB of heap and took seconds;
+  it now allocates only the metadata's worth and returns in
+  milliseconds. Measured on a 317 MB WAV: 8.5 s / +317 MB heap →
+  0.4 s / +0 MB.
+- Behavioural contract: the source must remain readable and
+  unmodified until `WriteFile` is done. `ReadFile` (and the `tunetag.OpenWAV` /
+  `OpenAIFF` wrappers) remember the path and reopen it on write,
+  so nothing changes for path-based callers. Callers that pass
+  their own `io.ReadSeeker` to `wav.Read` / `aiff.Read` must keep
+  it open until after `WriteFile`; if the source disappears,
+  `WriteFile` fails cleanly without emitting a corrupt file.
+- `WriteFile` streams through a `bufio.Writer` instead of
+  assembling the whole output file in memory, so writes are also
+  O(metadata) in heap regardless of audio size.
+
 ## [0.1.5] - 2026-07-19
 
 ### Fixed

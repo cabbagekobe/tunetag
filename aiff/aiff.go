@@ -14,8 +14,16 @@
 //     (lowercase).
 //
 // All other top-level chunks (COMM, SSND, FVER, MARK, …) are
-// preserved byte-for-byte. WriteFile rewrites the file from the
-// in-memory chunk list and rebuilds the FORM size field.
+// preserved byte-for-byte. Their bytes are NOT loaded into memory:
+// Read records each chunk's offset and size and WriteFile streams
+// the bytes from the original source, so tagging a large file costs
+// only the metadata's worth of memory. Consequently the source must
+// remain readable — and unmodified — until WriteFile is done: keep
+// the ReadSeeker passed to Read open, or use ReadFile, which
+// remembers the path and reopens it on write. A source that shrinks
+// or disappears makes WriteFile fail cleanly; an in-place rewrite
+// of the same size is not detected. WriteFile rebuilds the FORM
+// size field.
 //
 // AIFF uses big-endian sizes (unlike WAV's little-endian RIFF).
 //
@@ -23,6 +31,7 @@
 package aiff
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/binary"
 	"errors"
@@ -75,14 +84,27 @@ type File struct {
 
 	// chunks is every top-level chunk in stream order. Metadata
 	// chunks are stored as placeholders so their position is
-	// preserved on write; non-metadata chunks carry raw bytes.
+	// preserved on write; non-metadata chunks record the
+	// offset/size of their bytes in the source stream.
 	chunks []chunk
+
+	// src is the stream raw chunk bodies are copied from at
+	// WriteFile time. Read keeps the caller's ReadSeeker; ReadFile
+	// records srcPath instead (and leaves src nil) so the handle
+	// need not stay open — WriteFile reopens the path.
+	src     io.ReadSeeker
+	srcPath string
 }
 
+// chunk is one top-level chunk inside the FORM wrapper. Raw chunks
+// parsed from a stream carry offset/size into the source (body is
+// nil); chunks synthesised at encode time carry their bytes in body.
 type chunk struct {
-	id   string
-	body []byte
-	kind chunkKind
+	id     string
+	body   []byte // synthesised bytes; nil when the chunk lives in the source stream
+	offset int64  // body start in the source stream (valid when body is nil)
+	size   uint32 // body length in the source stream (valid when body is nil)
+	kind   chunkKind
 }
 
 type chunkKind uint8
@@ -95,7 +117,9 @@ const (
 )
 
 // Read parses the metadata region of an AIFF / AIFC file. Audio
-// chunks are not decoded; their bytes are preserved.
+// chunks are neither decoded nor buffered — only their offset/size
+// is recorded — so rs must remain open, readable, and unmodified
+// until any WriteFile call is done.
 func Read(rs io.ReadSeeker) (*File, error) {
 	end, err := rs.Seek(0, io.SeekEnd)
 	if err != nil {
@@ -116,7 +140,7 @@ func Read(rs io.ReadSeeker) (*File, error) {
 		return nil, ErrNoAIFF
 	}
 
-	f := &File{FormType: form, Text: map[string]string{}}
+	f := &File{FormType: form, Text: map[string]string{}, src: rs}
 	for {
 		var ch [8]byte
 		_, err := io.ReadFull(rs, ch[:])
@@ -131,10 +155,10 @@ func Read(rs io.ReadSeeker) (*File, error) {
 		}
 		id := string(ch[0:4])
 		size := binary.BigEndian.Uint32(ch[4:8])
-		// Bound the allocation against the remaining file size so
-		// a malformed (or hostile) chunk header claiming size=4 GiB
-		// doesn't force a 4 GiB allocation before the subsequent
-		// ReadFull fails.
+		// Bound the read against the remaining file size so a
+		// malformed (or hostile) chunk header claiming size=4 GiB
+		// doesn't force a 4 GiB allocation on the metadata paths
+		// below (or a silent seek past end-of-file).
 		pos, err := rs.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return nil, err
@@ -142,60 +166,82 @@ func Read(rs io.ReadSeeker) (*File, error) {
 		if int64(size) > end-pos {
 			return nil, fmt.Errorf("aiff: chunk %q declared size %d exceeds remaining file (%d bytes)", id, size, end-pos)
 		}
-		body := make([]byte, size)
-		if _, err := io.ReadFull(rs, body); err != nil {
-			return nil, fmt.Errorf("aiff: chunk %q short body (%d bytes): %w", id, size, err)
-		}
-		// AIFF chunks are word-aligned: odd size → 1 pad byte.
-		if size%2 == 1 {
-			var pad [1]byte
-			if _, err := io.ReadFull(rs, pad[:]); err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
-				return nil, fmt.Errorf("aiff: read pad after %q: %w", id, err)
-			}
-		}
+
+		// Only metadata chunks are materialised. Everything else —
+		// notably the audio SSND chunk, which dominates the file —
+		// is skipped over and remembered by offset/size so WriteFile
+		// can stream it from the source later.
 		switch id {
-		case ChunkNAME, ChunkAUTH, ChunkCopyright:
-			f.Text[id] = stripTrailingNUL(string(body))
-			f.chunks = append(f.chunks, chunk{id: id, kind: chunkText})
-		case ChunkANNO:
-			f.Annotations = append(f.Annotations, stripTrailingNUL(string(body)))
-			f.chunks = append(f.chunks, chunk{id: id, kind: chunkAnno})
-		case ChunkID3:
-			t, err := id3v2.Read(bytes.NewReader(body))
-			if err != nil {
-				return nil, fmt.Errorf("aiff: ID3 chunk: %w", err)
+		case ChunkNAME, ChunkAUTH, ChunkCopyright, ChunkANNO, ChunkID3:
+			body := make([]byte, size)
+			if _, err := io.ReadFull(rs, body); err != nil {
+				return nil, fmt.Errorf("aiff: chunk %q short body (%d bytes): %w", id, size, err)
 			}
-			f.ID3 = t
-			f.chunks = append(f.chunks, chunk{id: id, kind: chunkID3v2})
+			switch id {
+			case ChunkANNO:
+				f.Annotations = append(f.Annotations, stripTrailingNUL(string(body)))
+				f.chunks = append(f.chunks, chunk{id: id, kind: chunkAnno})
+			case ChunkID3:
+				t, err := id3v2.Read(bytes.NewReader(body))
+				if err != nil {
+					return nil, fmt.Errorf("aiff: ID3 chunk: %w", err)
+				}
+				f.ID3 = t
+				f.chunks = append(f.chunks, chunk{id: id, kind: chunkID3v2})
+			default:
+				f.Text[id] = stripTrailingNUL(string(body))
+				f.chunks = append(f.chunks, chunk{id: id, kind: chunkText})
+			}
 		default:
-			f.chunks = append(f.chunks, chunk{id: id, body: body, kind: chunkRaw})
+			if _, err := rs.Seek(pos+int64(size), io.SeekStart); err != nil {
+				return nil, err
+			}
+			f.chunks = append(f.chunks, chunk{id: id, offset: pos, size: size, kind: chunkRaw})
+		}
+		// AIFF chunks are word-aligned: odd size → 1 pad byte. Skip
+		// it if present (a seek past end-of-file is harmless — the
+		// next header read just hits EOF).
+		if size%2 == 1 {
+			if _, err := rs.Seek(1, io.SeekCurrent); err != nil {
+				return nil, fmt.Errorf("aiff: skip pad after %q: %w", id, err)
+			}
 		}
 	}
 	return f, nil
 }
 
-// ReadFile is a convenience wrapper around Read.
+// ReadFile is a convenience wrapper around Read. The returned File
+// remembers path (rather than holding the handle open) and reopens
+// it to stream the audio chunks on WriteFile.
 func ReadFile(path string) (*File, error) {
-	f, err := os.Open(path)
+	fh, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
-	return Read(f)
+	defer func() { _ = fh.Close() }()
+	f, err := Read(fh)
+	if err != nil {
+		return nil, err
+	}
+	f.src = nil
+	f.srcPath = path
+	return f, nil
 }
 
-// WriteFile rewrites path with the current chunk layout. The
-// audio chunks are preserved; only text / annotation / ID3 chunks
-// are regenerated. Empty Text entries, no annotations, and a nil
-// ID3 cause the corresponding chunks to be dropped.
+// WriteFile rewrites path with the current chunk layout. The audio
+// chunks are streamed from the source (the ReadSeeker given to
+// Read, or a reopen of the ReadFile path); only text / annotation /
+// ID3 chunks are regenerated. Empty Text entries, no annotations,
+// and a nil ID3 cause the corresponding chunks to be dropped.
 func (f *File) WriteFile(path string) error {
-	body, err := f.encode()
+	src, closeSrc, err := f.source()
 	if err != nil {
 		return err
 	}
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".tunetag-aiff-*.tmp")
 	if err != nil {
+		closeSrc()
 		return err
 	}
 	tmpPath := tmp.Name()
@@ -203,7 +249,12 @@ func (f *File) WriteFile(path string) error {
 		_ = tmp.Close()
 		_ = os.Remove(tmpPath)
 	}
-	if _, err := tmp.Write(body); err != nil {
+	err = f.encodeTo(tmp, src)
+	// The source is only read during encodeTo; close it before the
+	// rename below — Windows refuses to replace a file that still
+	// has an open handle.
+	closeSrc()
+	if err != nil {
 		cleanup()
 		return err
 	}
@@ -222,12 +273,29 @@ func (f *File) WriteFile(path string) error {
 	return nil
 }
 
-func (f *File) encode() ([]byte, error) {
+// source returns the stream raw chunk bodies are copied from: a
+// fresh handle on the remembered path (ReadFile), or the caller's
+// ReadSeeker (Read). It is nil — with a no-op closer — for a File
+// built by hand with no stream-backed chunks.
+func (f *File) source() (io.ReadSeeker, func(), error) {
+	if f.srcPath != "" {
+		fh, err := os.Open(f.srcPath)
+		if err != nil {
+			return nil, nil, fmt.Errorf("aiff: reopen source: %w", err)
+		}
+		return fh, func() { _ = fh.Close() }, nil
+	}
+	return f.src, func() {}, nil
+}
+
+// encodeTo writes the full FORM/AIFF byte stream to w, drawing raw
+// chunk bodies from src.
+func (f *File) encodeTo(w io.Writer, src io.ReadSeeker) error {
 	if f.FormType == "" {
 		f.FormType = formAIFF
 	}
 	if f.FormType != formAIFF && f.FormType != formAIFC {
-		return nil, fmt.Errorf("aiff: invalid FormType %q", f.FormType)
+		return fmt.Errorf("aiff: invalid FormType %q", f.FormType)
 	}
 
 	// Materialise chunk list. Annotation placeholders only emit
@@ -259,7 +327,7 @@ func (f *File) encode() ([]byte, error) {
 			}
 			var buf bytes.Buffer
 			if err := f.ID3.Encode(&buf); err != nil {
-				return nil, fmt.Errorf("aiff: encode ID3 chunk: %w", err)
+				return fmt.Errorf("aiff: encode ID3 chunk: %w", err)
 			}
 			emitted = append(emitted, chunk{id: ChunkID3, body: buf.Bytes(), kind: chunkRaw})
 		default:
@@ -283,33 +351,60 @@ func (f *File) encode() ([]byte, error) {
 	if !saw[ChunkID3] && f.ID3 != nil {
 		var buf bytes.Buffer
 		if err := f.ID3.Encode(&buf); err != nil {
-			return nil, fmt.Errorf("aiff: encode ID3 chunk: %w", err)
+			return fmt.Errorf("aiff: encode ID3 chunk: %w", err)
 		}
 		emitted = append(emitted, chunk{id: ChunkID3, body: buf.Bytes(), kind: chunkRaw})
 	}
 
-	// Build payload (everything after FORM size + form type).
-	var inner bytes.Buffer
-	inner.WriteString(f.FormType)
+	// The FORM size field precedes the payload, so total the chunk
+	// sizes arithmetically before streaming anything.
+	innerLen := int64(4) // form type
 	for _, c := range emitted {
 		if len(c.id) != 4 {
-			return nil, fmt.Errorf("aiff: chunk id %q is not 4 bytes", c.id)
+			return fmt.Errorf("aiff: chunk id %q is not 4 bytes", c.id)
 		}
-		inner.WriteString(c.id)
-		_ = binary.Write(&inner, binary.BigEndian, uint32(len(c.body)))
-		inner.Write(c.body)
-		if len(c.body)%2 == 1 {
-			inner.WriteByte(0)
+		n := chunkBodyLen(c)
+		innerLen += 8 + n + n%2
+	}
+	if uint64(innerLen) > uint64(^uint32(0)) {
+		return errors.New("aiff: encoded body exceeds 4 GiB")
+	}
+
+	bw := bufio.NewWriter(w)
+	_, _ = bw.WriteString(chunkFORM)
+	_ = binary.Write(bw, binary.BigEndian, uint32(innerLen))
+	_, _ = bw.WriteString(f.FormType)
+	for _, c := range emitted {
+		n := chunkBodyLen(c)
+		_, _ = bw.WriteString(c.id)
+		_ = binary.Write(bw, binary.BigEndian, uint32(n))
+		if c.body != nil || c.size == 0 {
+			_, _ = bw.Write(c.body)
+		} else {
+			if src == nil {
+				return fmt.Errorf("aiff: chunk %q needs the source stream, which is no longer available", c.id)
+			}
+			if _, err := src.Seek(c.offset, io.SeekStart); err != nil {
+				return fmt.Errorf("aiff: seek source for chunk %q: %w", c.id, err)
+			}
+			if _, err := io.CopyN(bw, src, int64(c.size)); err != nil {
+				return fmt.Errorf("aiff: copy chunk %q from source: %w", c.id, err)
+			}
+		}
+		if n%2 == 1 {
+			_ = bw.WriteByte(0)
 		}
 	}
-	if uint64(inner.Len()) > uint64(^uint32(0)) {
-		return nil, errors.New("aiff: encoded body exceeds 4 GiB")
+	return bw.Flush()
+}
+
+// chunkBodyLen is the on-disk body length of c (excluding header
+// and alignment pad).
+func chunkBodyLen(c chunk) int64 {
+	if c.body != nil {
+		return int64(len(c.body))
 	}
-	var out bytes.Buffer
-	out.WriteString(chunkFORM)
-	_ = binary.Write(&out, binary.BigEndian, uint32(inner.Len()))
-	out.Write(inner.Bytes())
-	return out.Bytes(), nil
+	return int64(c.size)
 }
 
 // --- accessors -------------------------------------------------
