@@ -20,6 +20,10 @@ jobs:
             target: FuzzReadFLAC
           - pkg: ./mp4/
             target: FuzzReadMP4
+          - pkg: ./wav/
+            target: FuzzReadWAV
+          - pkg: ./aiff/
+            target: FuzzReadAIFF
     steps:
       - uses: actions/checkout@v4
 

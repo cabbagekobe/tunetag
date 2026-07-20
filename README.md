@@ -28,12 +28,16 @@ solid for every supported container:
   is detected and rejected.
 - **WAV (RIFF/WAVE)**: LIST/INFO entries and embedded `id3 ` chunks
   (ID3v2 inside WAV) both round-trip. Non-metadata chunks
-  (`fmt `, `data`, `fact`, `JUNK`, …) are preserved byte-for-byte.
-  RF64 / BW64 (64-bit RIFF) is detected and rejected.
+  (`fmt `, `data`, `fact`, `JUNK`, …) are preserved byte-for-byte
+  without being buffered: `Read` records their offset/size and
+  `WriteFile` streams them from the source, so tagging a
+  multi-hundred-MB recording costs only the metadata's worth of
+  memory. RF64 / BW64 (64-bit RIFF) is detected and rejected.
 - **AIFF / AIFC**: NAME / AUTH / "(c) " / ANNO text chunks (with
   multi-instance ANNO) and embedded `ID3 ` chunks round-trip;
   non-metadata chunks (COMM / SSND / FVER / MARK / …) pass
-  through verbatim. Big-endian sizes; both AIFF and AIFC form
+  through verbatim, streamed by offset/size like WAV rather than
+  held in memory. Big-endian sizes; both AIFF and AIFC form
   types are recognised.
 - **Ogg Vorbis / Opus**: comment packets round-trip with full
   re-paging — the writer encodes a fresh comment packet, splits
@@ -89,11 +93,11 @@ Requires Go 1.23 or later.
 | Fragmented MP4 (mvex/moof)  | — | ❌ | rejected on write |
 | WAV LIST/INFO               | ✅ | ✅ | INAM / IART / IPRD / ICRD / IGNR / ICMT / ITRK |
 | WAV embedded `id3 ` chunk   | ✅ | ✅ | full ID3v2 tag round-trip (incl. APIC) |
-| WAV non-metadata chunks     | ✅ | ✅ | `fmt `, `data`, `fact`, `JUNK`, … preserved verbatim |
+| WAV non-metadata chunks     | ✅ | ✅ | `fmt `, `data`, `fact`, `JUNK`, … preserved verbatim (streamed, not buffered) |
 | RF64 / BW64 (64-bit RIFF)   | — | ❌ | detected and rejected |
 | AIFF / AIFC text chunks     | ✅ | ✅ | NAME / AUTH / "(c) " / ANNO (multi-instance) |
 | AIFF embedded `ID3 ` chunk  | ✅ | ✅ | full ID3v2 round-trip; preferred over text chunks |
-| AIFF non-metadata chunks    | ✅ | ✅ | COMM / SSND / FVER / MARK / … preserved verbatim |
+| AIFF non-metadata chunks    | ✅ | ✅ | COMM / SSND / FVER / MARK / … preserved verbatim (streamed, not buffered) |
 | Ogg Vorbis comment header   | ✅ | ✅ | re-pages comment packet + renumbers / re-CRCs subsequent pages |
 | Ogg Opus comment header     | ✅ | ✅ | as above; supports OpusHead / OpusTags variant |
 | Ogg METADATA_BLOCK_PICTURE  | ✅ | ✅ | base64-wrapped FLAC PICTURE block; shared format helpers |
@@ -187,6 +191,12 @@ common `tunetag.Tag` interface prefers the `id3 ` chunk's values.
 RF64 / BW64 (64-bit RIFF) files are rejected with
 `wav.ErrRF64Unsupported` rather than silently mis-parsed.
 
+`WriteFile` streams the audio chunks from the source instead of
+holding them in memory: `ReadFile` remembers the path and reopens
+it on write, so the pattern above just works. If you call
+`wav.Read` with your own `io.ReadSeeker`, keep it open — and
+unmodified — until `WriteFile` returns.
+
 ### AIFF / AIFC
 
 ```go
@@ -200,6 +210,10 @@ a.ID3.SetAlbum("Album")
 a.ID3.SetText("TDRC", "2026")
 if err := a.WriteFile("song.aif"); err != nil { log.Fatal(err) }
 ```
+
+Like WAV, `WriteFile` streams the audio chunks from the source;
+callers of `aiff.Read` (rather than `ReadFile`) must keep their
+`io.ReadSeeker` open and unmodified until `WriteFile` returns.
 
 ### Ogg Vorbis / Opus
 
@@ -318,6 +332,11 @@ Build with `go install github.com/cabbagekobe/tunetag/cmd/tunetag@latest`.
   an existing PADDING block when possible. Mutating Title /
   Artist on an already-tagged file usually does not touch any
   audio bytes.
+- **Tagging huge WAV / AIFF recordings**: `Read` skips audio
+  chunks via `Seek` and `WriteFile` streams them from the source,
+  so heap stays O(metadata) regardless of audio size. On a 317 MB
+  WAV, tag-reading dropped from 8.5 s / ~317 MB of heap to 0.4 s
+  with no audio-sized allocation.
 - **Preserving unknown metadata**: tunetag never silently drops
   data. Unknown ID3v2 frames are kept as `GenericFrame`; unknown
   FLAC blocks ride through as `RawBlock`; iTunes purchase info

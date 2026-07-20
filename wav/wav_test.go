@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -296,19 +297,39 @@ func TestWriteFile_RoundTripsLISTINFO(t *testing.T) {
 	if g.InfoValue(InfoTitle) != "new title" || g.InfoValue(InfoArtist) != "new artist" {
 		t.Errorf("after write: title=%q artist=%q", g.Title(), g.Artist())
 	}
-	// The "data" chunk's contents must be unchanged.
-	found := false
-	for _, c := range g.chunks {
-		if c.id == "data" {
-			if string(c.body) != "audio_bytes" {
-				t.Errorf("data body = %q", c.body)
-			}
-			found = true
+	// The "data" chunk's contents must be unchanged. Raw chunks are
+	// no longer buffered in memory, so check the bytes on disk.
+	if got := rawChunkBody(t, p, "data"); string(got) != "audio_bytes" {
+		t.Errorf("data body = %q", got)
+	}
+}
+
+// rawChunkBody re-parses the RIFF layout of the file at path and
+// returns the body bytes of the first chunk with the given id.
+// Fails the test when the chunk is absent.
+func rawChunkBody(t *testing.T, path, id string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) < 12 {
+		t.Fatalf("file too short: %d bytes", len(raw))
+	}
+	for i := 12; i+8 <= len(raw); {
+		cid := string(raw[i : i+4])
+		size := int(binary.LittleEndian.Uint32(raw[i+4 : i+8]))
+		i += 8
+		if i+size > len(raw) {
+			t.Fatalf("chunk %q size %d overflows file", cid, size)
 		}
+		if cid == id {
+			return raw[i : i+size]
+		}
+		i += size + size%2
 	}
-	if !found {
-		t.Errorf("data chunk lost on round-trip")
-	}
+	t.Fatalf("chunk %q not found in %s", id, path)
+	return nil
 }
 
 func TestWriteFile_AddsID3WhenAbsent(t *testing.T) {
@@ -435,5 +456,106 @@ func TestTrackNumber_FromInfoITRK(t *testing.T) {
 	n, total := f.TrackNumber()
 	if n != 7 || total != 15 {
 		t.Errorf("Track = %d/%d", n, total)
+	}
+}
+
+// --- Streaming (audio bytes must stay out of memory) -----------
+
+// countingReadSeeker wraps a ReadSeeker and tallies the bytes
+// delivered through Read, so a test can prove how much of the
+// stream was actually consumed (Seeks are free).
+type countingReadSeeker struct {
+	rs   io.ReadSeeker
+	read int64
+}
+
+func (c *countingReadSeeker) Read(p []byte) (int, error) {
+	n, err := c.rs.Read(p)
+	c.read += int64(n)
+	return n, err
+}
+
+func (c *countingReadSeeker) Seek(offset int64, whence int) (int64, error) {
+	return c.rs.Seek(offset, whence)
+}
+
+func TestRead_SkipsAudioBytes(t *testing.T) {
+	// An 8 MiB data chunk: Read must skip it via Seek rather than
+	// buffering it. The regression this pins: tag-reading a
+	// multi-hundred-MB WAV recording used to cost the whole file
+	// in heap.
+	audio := bytes.Repeat([]byte{0xA5}, 8<<20)
+	var pay bytes.Buffer
+	putChunk(&pay, "fmt ", bytes.Repeat([]byte{0x11}, 16))
+	putChunk(&pay, ChunkLIST, infoBody([2]string{InfoTitle, "big"}))
+	putChunk(&pay, "data", audio)
+	raw := buildWAV(pay.Bytes())
+
+	crs := &countingReadSeeker{rs: bytes.NewReader(raw)}
+	f, err := Read(crs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Title() != "big" {
+		t.Errorf("Title = %q", f.Title())
+	}
+	// Header + chunk headers + LIST/INFO body only; far below the
+	// 8 MiB audio payload.
+	if crs.read > 4<<10 {
+		t.Errorf("Read consumed %d bytes; audio chunk was not skipped", crs.read)
+	}
+}
+
+func TestWriteFile_FromReaderSource(t *testing.T) {
+	// Read from an in-memory stream (not ReadFile): WriteFile must
+	// stream the audio bytes from that same reader.
+	var pay bytes.Buffer
+	putChunk(&pay, "fmt ", bytes.Repeat([]byte{0x22}, 16))
+	putChunk(&pay, "data", []byte("reader_audio"))
+	raw := buildWAV(pay.Bytes())
+
+	f, err := Read(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.SetInfo(InfoTitle, "via reader")
+	p := filepath.Join(t.TempDir(), "out.wav")
+	if err := f.WriteFile(p); err != nil {
+		t.Fatal(err)
+	}
+	g, err := ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.InfoValue(InfoTitle) != "via reader" {
+		t.Errorf("title = %q", g.InfoValue(InfoTitle))
+	}
+	if got := rawChunkBody(t, p, "data"); string(got) != "reader_audio" {
+		t.Errorf("data body = %q", got)
+	}
+}
+
+func TestWriteFile_SourceFileGone(t *testing.T) {
+	// ReadFile remembers the path instead of buffering audio; if
+	// the file vanishes before WriteFile, the write must fail
+	// cleanly rather than emit a corrupt file.
+	var pay bytes.Buffer
+	putChunk(&pay, "fmt ", bytes.Repeat([]byte{0x33}, 16))
+	putChunk(&pay, "data", []byte("gone_audio"))
+	raw := buildWAV(pay.Bytes())
+	p := writeTemp(t, "x.wav", raw)
+
+	f, err := ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.WriteFile(p); err == nil {
+		t.Fatal("expected error when source file is gone, got nil")
+	}
+	if _, err := os.Stat(p); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a file was written despite the failure: stat err = %v", err)
 	}
 }

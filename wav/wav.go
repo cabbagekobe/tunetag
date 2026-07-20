@@ -13,9 +13,17 @@
 //     subpackage.
 //
 // All other top-level chunks ("fmt ", "data", "fact", "JUNK", …)
-// are preserved byte-for-byte. WriteFile rewrites the file from
-// the in-memory chunk list, so any chunk ordering produced by Read
-// is faithfully restored.
+// are preserved byte-for-byte. Their bytes are NOT loaded into
+// memory: Read records each chunk's offset and size and WriteFile
+// streams the bytes from the original source, so tagging a
+// multi-hundred-MB recording costs only the metadata's worth of
+// memory. Consequently the source must remain readable — and
+// unmodified — until WriteFile is done: keep the ReadSeeker
+// passed to Read open, or use ReadFile, which remembers the path
+// and reopens it on write. A source that shrinks or disappears
+// makes WriteFile fail cleanly; an in-place rewrite of the same
+// size is not detected.
+// Any chunk ordering produced by Read is faithfully restored.
 //
 // 64-bit RIFF (RF64 / BW64) is detected and rejected with
 // ErrRF64Unsupported; the spec's 64-bit size table (ds64) is not
@@ -25,6 +33,7 @@
 package wav
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/binary"
 	"errors"
@@ -86,7 +95,8 @@ const (
 
 // File is the parsed metadata + chunk layout of a WAV file. The
 // audio bytes inside "data" (and every non-metadata chunk) are
-// captured verbatim so they can be re-emitted by WriteFile.
+// preserved by reference — offset and size into the source — and
+// streamed back out by WriteFile.
 type File struct {
 	// Info holds LIST/INFO entries in stream order. Use Info
 	// directly to add, mutate, or delete entries; the helpers
@@ -100,9 +110,16 @@ type File struct {
 
 	// chunks is every top-level chunk in stream order. LIST/INFO
 	// and id3 chunks are stored as placeholder entries so their
-	// position is preserved on write; other chunks carry their
-	// raw bytes.
+	// position is preserved on write; other chunks record the
+	// offset/size of their bytes in the source stream.
 	chunks []chunk
+
+	// src is the stream raw chunk bodies are copied from at
+	// WriteFile time. Read keeps the caller's ReadSeeker; ReadFile
+	// records srcPath instead (and leaves src nil) so the handle
+	// need not stay open — WriteFile reopens the path.
+	src     io.ReadSeeker
+	srcPath string
 }
 
 // InfoItem is one entry inside a LIST/INFO chunk: a 4-character ID
@@ -113,14 +130,17 @@ type InfoItem struct {
 	Value string
 }
 
-// chunk is one top-level chunk inside the RIFF wrapper. For LIST
-// chunks the body holds the bytes after the "INFO" type tag (i.e.
-// the concatenated INFO sub-chunks); the kind discriminator lets
-// the writer regenerate that layout from File.Info.
+// chunk is one top-level chunk inside the RIFF wrapper. Raw chunks
+// parsed from a stream carry offset/size into the source (body is
+// nil); chunks synthesised at encode time carry their bytes in
+// body. The kind discriminator lets the writer regenerate LIST/INFO
+// and id3 layouts from File.Info / File.ID3.
 type chunk struct {
-	id   string // 4 ASCII bytes
-	body []byte // raw bytes; for synthetic chunks this is nil
-	kind chunkKind
+	id     string // 4 ASCII bytes
+	body   []byte // synthesised bytes; nil when the chunk lives in the source stream
+	offset int64  // body start in the source stream (valid when body is nil)
+	size   uint32 // body length in the source stream (valid when body is nil)
+	kind   chunkKind
 }
 
 type chunkKind uint8
@@ -132,8 +152,10 @@ const (
 )
 
 // Read parses the metadata region (and remembers the full chunk
-// layout) of a WAV file from rs. Audio chunks are not decoded;
-// their bytes are preserved.
+// layout) of a WAV file from rs. Audio chunks are neither decoded
+// nor buffered — only their offset/size is recorded — so rs must
+// remain open, readable, and unmodified until any WriteFile call
+// is done.
 func Read(rs io.ReadSeeker) (*File, error) {
 	end, err := rs.Seek(0, io.SeekEnd)
 	if err != nil {
@@ -158,7 +180,7 @@ func Read(rs io.ReadSeeker) (*File, error) {
 		return nil, ErrNoWAV
 	}
 
-	f := &File{}
+	f := &File{src: rs}
 	for {
 		var ch [8]byte
 		_, err := io.ReadFull(rs, ch[:])
@@ -175,11 +197,11 @@ func Read(rs io.ReadSeeker) (*File, error) {
 		}
 		id := string(ch[0:4])
 		size := binary.LittleEndian.Uint32(ch[4:8])
-		// Bound the allocation: a chunk that claims to be larger
-		// than the remaining file cannot be valid. Without this
-		// check a malformed (or hostile) file with size=4 GiB
-		// would force a 4 GiB allocation up front before the
-		// subsequent ReadFull failed.
+		// Bound the read: a chunk that claims to be larger than the
+		// remaining file cannot be valid. Without this check a
+		// malformed (or hostile) file with size=4 GiB would make
+		// the metadata paths below allocate 4 GiB (and the seek
+		// paths silently run past end-of-file).
 		pos, err := rs.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return nil, err
@@ -187,27 +209,42 @@ func Read(rs io.ReadSeeker) (*File, error) {
 		if int64(size) > end-pos {
 			return nil, fmt.Errorf("wav: chunk %q declared size %d exceeds remaining file (%d bytes)", id, size, end-pos)
 		}
-		body := make([]byte, size)
-		if _, err := io.ReadFull(rs, body); err != nil {
-			return nil, fmt.Errorf("wav: chunk %q short body (%d bytes): %w", id, size, err)
-		}
-		// RIFF chunks are word-aligned: an odd size is followed by
-		// one pad byte. Skip it if present (EOF mid-pad is fine).
-		if size%2 == 1 {
-			var pad [1]byte
-			if _, err := io.ReadFull(rs, pad[:]); err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
-				return nil, fmt.Errorf("wav: read pad after %q: %w", id, err)
-			}
-		}
+
+		// Only metadata chunks are materialised. Everything else —
+		// notably the audio "data" chunk, which dominates the file —
+		// is skipped over and remembered by offset/size so WriteFile
+		// can stream it from the source later.
 		switch {
-		case id == ChunkLIST && len(body) >= 4 && string(body[0:4]) == ChunkINFO:
-			items, err := parseInfo(body[4:])
+		case id == ChunkLIST && size >= 4:
+			var typ [4]byte
+			if _, err := io.ReadFull(rs, typ[:]); err != nil {
+				return nil, fmt.Errorf("wav: chunk %q short body (%d bytes): %w", id, size, err)
+			}
+			if string(typ[:]) != ChunkINFO {
+				// A non-INFO LIST (e.g. adtl) is preserved raw; the
+				// recorded range covers the whole body including the
+				// 4 type bytes just consumed.
+				if _, err := rs.Seek(pos+int64(size), io.SeekStart); err != nil {
+					return nil, err
+				}
+				f.chunks = append(f.chunks, chunk{id: id, offset: pos, size: size, kind: chunkRaw})
+				break
+			}
+			body := make([]byte, size-4)
+			if _, err := io.ReadFull(rs, body); err != nil {
+				return nil, fmt.Errorf("wav: chunk %q short body (%d bytes): %w", id, size, err)
+			}
+			items, err := parseInfo(body)
 			if err != nil {
 				return nil, fmt.Errorf("wav: LIST/INFO: %w", err)
 			}
 			f.Info = append(f.Info, items...)
 			f.chunks = append(f.chunks, chunk{id: ChunkLIST, kind: chunkInfoList})
 		case id == ChunkID3:
+			body := make([]byte, size)
+			if _, err := io.ReadFull(rs, body); err != nil {
+				return nil, fmt.Errorf("wav: chunk %q short body (%d bytes): %w", id, size, err)
+			}
 			t, err := id3v2.Read(bytes.NewReader(body))
 			if err != nil {
 				return nil, fmt.Errorf("wav: id3 chunk: %w", err)
@@ -215,20 +252,39 @@ func Read(rs io.ReadSeeker) (*File, error) {
 			f.ID3 = t
 			f.chunks = append(f.chunks, chunk{id: ChunkID3, kind: chunkID3v2})
 		default:
-			f.chunks = append(f.chunks, chunk{id: id, body: body, kind: chunkRaw})
+			if _, err := rs.Seek(pos+int64(size), io.SeekStart); err != nil {
+				return nil, err
+			}
+			f.chunks = append(f.chunks, chunk{id: id, offset: pos, size: size, kind: chunkRaw})
+		}
+		// RIFF chunks are word-aligned: an odd size is followed by
+		// one pad byte. Skip it if present (a seek past end-of-file
+		// is harmless — the next header read just hits EOF).
+		if size%2 == 1 {
+			if _, err := rs.Seek(1, io.SeekCurrent); err != nil {
+				return nil, fmt.Errorf("wav: skip pad after %q: %w", id, err)
+			}
 		}
 	}
 	return f, nil
 }
 
-// ReadFile is a convenience wrapper around Read.
+// ReadFile is a convenience wrapper around Read. The returned File
+// remembers path (rather than holding the handle open) and reopens
+// it to stream the audio chunks on WriteFile.
 func ReadFile(path string) (*File, error) {
-	f, err := os.Open(path)
+	fh, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
-	return Read(f)
+	defer func() { _ = fh.Close() }()
+	f, err := Read(fh)
+	if err != nil {
+		return nil, err
+	}
+	f.src = nil
+	f.srcPath = path
+	return f, nil
 }
 
 // parseInfo splits the body of a LIST/INFO chunk into its
@@ -279,8 +335,9 @@ func (f *File) encodeInfo() []byte {
 }
 
 // WriteFile rewrites path with the current chunk layout. The
-// caller's audio bytes are preserved; only LIST/INFO and id3
-// chunks are regenerated from f.Info and f.ID3 respectively.
+// caller's audio bytes are streamed from the source (the ReadSeeker
+// given to Read, or a reopen of the ReadFile path); only LIST/INFO
+// and id3 chunks are regenerated from f.Info and f.ID3.
 //
 // When f.Info is empty the LIST chunk is omitted. When f.ID3 is
 // nil the id3 chunk is omitted. If either is set but no
@@ -289,10 +346,12 @@ func (f *File) encodeInfo() []byte {
 // end so it sits after the audio data, which is the most
 // compatible position for players that pre-buffer "data".
 func (f *File) WriteFile(path string) error {
-	body, err := f.encode()
+	src, closeSrc, err := f.source()
 	if err != nil {
 		return err
 	}
+	defer closeSrc()
+
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".tunetag-wav-*.tmp")
 	if err != nil {
@@ -303,7 +362,7 @@ func (f *File) WriteFile(path string) error {
 		_ = tmp.Close()
 		_ = os.Remove(tmpPath)
 	}
-	if _, err := tmp.Write(body); err != nil {
+	if err := f.encodeTo(tmp, src); err != nil {
 		cleanup()
 		return err
 	}
@@ -322,7 +381,24 @@ func (f *File) WriteFile(path string) error {
 	return nil
 }
 
-func (f *File) encode() ([]byte, error) {
+// source returns the stream raw chunk bodies are copied from: a
+// fresh handle on the remembered path (ReadFile), or the caller's
+// ReadSeeker (Read). It is nil — with a no-op closer — for a File
+// built by hand with no stream-backed chunks.
+func (f *File) source() (io.ReadSeeker, func(), error) {
+	if f.srcPath != "" {
+		fh, err := os.Open(f.srcPath)
+		if err != nil {
+			return nil, nil, fmt.Errorf("wav: reopen source: %w", err)
+		}
+		return fh, func() { _ = fh.Close() }, nil
+	}
+	return f.src, func() {}, nil
+}
+
+// encodeTo writes the full RIFF/WAVE byte stream to w, drawing raw
+// chunk bodies from src.
+func (f *File) encodeTo(w io.Writer, src io.ReadSeeker) error {
 	// Materialise the chunk list, substituting placeholders with
 	// real bytes and dropping placeholders that have nothing to
 	// emit (empty Info or nil ID3).
@@ -343,7 +419,7 @@ func (f *File) encode() ([]byte, error) {
 			}
 			var buf bytes.Buffer
 			if err := f.ID3.Encode(&buf); err != nil {
-				return nil, fmt.Errorf("wav: encode id3 chunk: %w", err)
+				return fmt.Errorf("wav: encode id3 chunk: %w", err)
 			}
 			emitted = append(emitted, chunk{id: ChunkID3, body: buf.Bytes(), kind: chunkRaw})
 		default:
@@ -356,35 +432,60 @@ func (f *File) encode() ([]byte, error) {
 	if !sawID3 && f.ID3 != nil {
 		var buf bytes.Buffer
 		if err := f.ID3.Encode(&buf); err != nil {
-			return nil, fmt.Errorf("wav: encode id3 chunk: %w", err)
+			return fmt.Errorf("wav: encode id3 chunk: %w", err)
 		}
 		emitted = append(emitted, chunk{id: ChunkID3, body: buf.Bytes(), kind: chunkRaw})
 	}
 
-	// Build payload (everything after RIFF size + WAVE).
-	var inner bytes.Buffer
-	inner.WriteString(waveType)
+	// The RIFF size field precedes the payload, so total the chunk
+	// sizes arithmetically before streaming anything.
+	innerLen := int64(4) // "WAVE"
 	for _, c := range emitted {
 		if len(c.id) != 4 {
-			return nil, fmt.Errorf("wav: chunk id %q is not 4 bytes", c.id)
+			return fmt.Errorf("wav: chunk id %q is not 4 bytes", c.id)
 		}
-		inner.WriteString(c.id)
-		_ = binary.Write(&inner, binary.LittleEndian, uint32(len(c.body)))
-		inner.Write(c.body)
-		if len(c.body)%2 == 1 {
-			inner.WriteByte(0)
+		n := chunkBodyLen(c)
+		innerLen += 8 + n + n%2
+	}
+	if uint64(innerLen) > uint64(^uint32(0)) {
+		return errors.New("wav: encoded body exceeds 4 GiB; RF64 required")
+	}
+
+	bw := bufio.NewWriter(w)
+	_, _ = bw.WriteString(chunkRIFF)
+	_ = binary.Write(bw, binary.LittleEndian, uint32(innerLen))
+	_, _ = bw.WriteString(waveType)
+	for _, c := range emitted {
+		n := chunkBodyLen(c)
+		_, _ = bw.WriteString(c.id)
+		_ = binary.Write(bw, binary.LittleEndian, uint32(n))
+		if c.body != nil || c.size == 0 {
+			_, _ = bw.Write(c.body)
+		} else {
+			if src == nil {
+				return fmt.Errorf("wav: chunk %q needs the source stream, which is no longer available", c.id)
+			}
+			if _, err := src.Seek(c.offset, io.SeekStart); err != nil {
+				return fmt.Errorf("wav: seek source for chunk %q: %w", c.id, err)
+			}
+			if _, err := io.CopyN(bw, src, int64(c.size)); err != nil {
+				return fmt.Errorf("wav: copy chunk %q from source: %w", c.id, err)
+			}
+		}
+		if n%2 == 1 {
+			_ = bw.WriteByte(0)
 		}
 	}
-	// RIFF wrapper: "RIFF" + uint32 size + WAVE-prefixed payload.
-	// The size field counts everything after itself.
-	if uint64(inner.Len()) > uint64(^uint32(0)) {
-		return nil, errors.New("wav: encoded body exceeds 4 GiB; RF64 required")
+	return bw.Flush()
+}
+
+// chunkBodyLen is the on-disk body length of c (excluding header
+// and alignment pad).
+func chunkBodyLen(c chunk) int64 {
+	if c.body != nil {
+		return int64(len(c.body))
 	}
-	var out bytes.Buffer
-	out.WriteString(chunkRIFF)
-	_ = binary.Write(&out, binary.LittleEndian, uint32(inner.Len()))
-	out.Write(inner.Bytes())
-	return out.Bytes(), nil
+	return int64(c.size)
 }
 
 // --- Convenience accessors -------------------------------------
