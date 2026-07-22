@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-07-22
+
+### Fixed
+
+- **mp4: robust handling of the trailing zero padding iTunes /
+  Apple Music.app leave inside over-declared `meta`/`udta` boxes.**
+  The child walker now treats any all-zero tail as a clean
+  end-of-children, including tails shorter than an 8-byte box header
+  that previously failed the read as a truncated header. A zero size
+  field followed by non-zero bytes is now rejected as malformed
+  instead of silently ending the walk and dropping the sibling boxes
+  that follow, so a full rewrite can no longer lose data on such
+  input.
+
 ## [0.2.0] - 2026-07-21
 
 ### Added
@@ -275,7 +289,8 @@ Initial public release.
 - **Tests**: extensive unit coverage including round-trip,
   defensive parsing, fuzz seeds, and per-package benchmarks.
 
-[Unreleased]: https://github.com/cabbagekobe/tunetag/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/cabbagekobe/tunetag/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/cabbagekobe/tunetag/releases/tag/v0.2.1
 [0.2.0]: https://github.com/cabbagekobe/tunetag/releases/tag/v0.2.0
 [0.1.5]: https://github.com/cabbagekobe/tunetag/releases/tag/v0.1.5
 [0.1.4]: https://github.com/cabbagekobe/tunetag/releases/tag/v0.1.4
