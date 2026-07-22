@@ -150,6 +150,12 @@ func rewriteContainer(body []byte, parentName string,
 	for pos < len(body) {
 		size, typ, childBody, err := splitChild(body, pos)
 		if err != nil {
+			if errors.Is(err, errPaddingBox) {
+				// Trailing zero padding (iTunes/Apple Music.app) is junk: drop
+				// it from the rebuilt container. The caller derives the chunk
+				// delta from the rebuilt moov size, so stco offsets stay correct.
+				break
+			}
 			return nil, fmt.Errorf("mp4: walking %s: %w", parentName, err)
 		}
 		newType, newBody, err := fn(typ, childBody)
