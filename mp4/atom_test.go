@@ -137,7 +137,9 @@ func TestScanTopLevel_OnMinimalFile(t *testing.T) {
 }
 
 func TestSplitChild_TruncatedHeader(t *testing.T) {
-	if _, _, _, err := splitChild([]byte{0x00, 0x00, 0x00}, 0); err == nil {
+	// Non-zero bytes so this is a genuine truncated header, not the all-zero
+	// trailing padding that splitChild treats as a clean end-of-children.
+	if _, _, _, err := splitChild([]byte{0x00, 0x00, 0x01}, 0); err == nil {
 		t.Fatal("expected error: header < 8 bytes")
 	}
 }

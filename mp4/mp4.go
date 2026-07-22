@@ -16,6 +16,12 @@ var (
 	ErrFragmentedUnsupport = errors.New("mp4: fragmented MP4 (mvex/moof) is not supported")
 )
 
+// errPaddingBox is returned by splitChild when the remaining buffer is all
+// zero: the trailing zero padding iTunes / Apple Music.app leave inside
+// over-declared meta/udta boxes. The child walkers treat it as a clean
+// end-of-children.
+var errPaddingBox = errors.New("mp4: zero-size padding box")
+
 // File holds enough state to read tags from an MP4 / M4A and write
 // them back. The atom layout outside of moov/udta/meta/ilst is
 // preserved verbatim through `rawTopBoxes`.
@@ -110,6 +116,9 @@ func (f *File) parseMoov() error {
 	for pos < len(f.rawMoov) {
 		size, typ, body, err := splitChild(f.rawMoov, pos)
 		if err != nil {
+			if errors.Is(err, errPaddingBox) {
+				break // trailing zero padding; stop this level cleanly.
+			}
 			return err
 		}
 		switch typ.String() {
@@ -135,6 +144,9 @@ func (f *File) parseUdta(udtaBody []byte, udtaBodyOff int) error {
 	for pos < len(udtaBody) {
 		size, typ, body, err := splitChild(udtaBody, pos)
 		if err != nil {
+			if errors.Is(err, errPaddingBox) {
+				break // trailing zero padding; stop this level cleanly.
+			}
 			return err
 		}
 		if typ.Equal("meta") {
@@ -159,6 +171,9 @@ func (f *File) parseMeta(metaBody []byte, metaBodyOff int) error {
 	for pos < len(metaBody) {
 		size, typ, body, err := splitChild(metaBody, pos)
 		if err != nil {
+			if errors.Is(err, errPaddingBox) {
+				break // trailing zero padding; stop this level cleanly.
+			}
 			return err
 		}
 		if typ.Equal("ilst") {
@@ -185,11 +200,25 @@ func (f *File) parseMeta(metaBody []byte, metaBodyOff int) error {
 // splitChild reads one child box header from buf at pos, returning
 // its total size, type, body slice (referencing buf), and error.
 func splitChild(buf []byte, pos int) (size uint32, typ FourCC, body []byte, err error) {
+	// iTunes / Apple Music.app leave raw zero padding inside over-declared
+	// meta/udta boxes. Any all-zero tail — even 1–7 bytes, which would
+	// otherwise trip the truncated-header check below — is that padding:
+	// signal a clean end-of-children. Requiring the whole tail to be zero
+	// keeps a genuine mid-stream corruption (zero size followed by real
+	// bytes) an error, so the walkers never silently drop later siblings.
+	if allZero(buf[pos:]) {
+		return 0, FourCC{}, nil, errPaddingBox
+	}
 	if pos+8 > len(buf) {
 		return 0, FourCC{}, nil, fmt.Errorf("mp4: child header truncated at offset %d", pos)
 	}
 	rawSize := uint32(buf[pos])<<24 | uint32(buf[pos+1])<<16 | uint32(buf[pos+2])<<8 | uint32(buf[pos+3])
 	copy(typ[:], buf[pos+4:pos+8])
+	if rawSize == 0 {
+		// Zero size but non-zero bytes follow: a malformed box, not the
+		// trailing padding above. Fail loudly instead of dropping siblings.
+		return 0, FourCC{}, nil, fmt.Errorf("mp4: unexpected zero-size box at offset %d", pos)
+	}
 	if rawSize == 1 {
 		return 0, FourCC{}, nil, fmt.Errorf("mp4: 64-bit largesize box %s in moov children not supported here", typ)
 	}
@@ -198,6 +227,17 @@ func splitChild(buf []byte, pos int) (size uint32, typ FourCC, body []byte, err 
 	}
 	body = buf[pos+8 : pos+int(rawSize)]
 	return rawSize, typ, body, nil
+}
+
+// allZero reports whether every byte of b is zero. It short-circuits on the
+// first non-zero byte, so walking normal (non-padding) boxes stays cheap.
+func allZero(b []byte) bool {
+	for _, c := range b {
+		if c != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // WriteFile writes f back to path. The strategy ladder is:
