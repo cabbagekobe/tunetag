@@ -21,21 +21,7 @@ func tbox(typ string, body []byte) []byte {
 // shape iTunes / Apple Music.app leave behind (an over-declared meta box). A
 // strict child walk reads the zero bytes as a size-0 box.
 func buildWithMetaPadding(title string, pad int) []byte {
-	dataAtom := tbox("data", append([]byte{0, 0, 0, 1, 0, 0, 0, 0}, []byte(title)...)) // type=1 (UTF-8), locale=0
-	nam := tbox("\xa9nam", dataAtom)
-	ilst := tbox("ilst", nam)
-
-	metaInner := ilst
-	if pad > 0 {
-		metaInner = append(metaInner, make([]byte, pad)...) // raw zero padding
-	}
-	metaBody := append([]byte{0, 0, 0, 0}, metaInner...) // meta FullBox: version+flags
-	meta := tbox("meta", metaBody)
-	udta := tbox("udta", meta)
-	moov := tbox("moov", udta)
-	ftyp := tbox("ftyp", []byte("M4A \x00\x00\x00\x00M4A mp42isom"))
-	mdat := tbox("mdat", make([]byte, 16))
-	return append(append(append([]byte{}, ftyp...), moov...), mdat...)
+	return buildWithMetaChildren(ilstWithTitle(title), make([]byte, pad)) // raw zero padding
 }
 
 func TestRead_MetaTrailingZeroPadding(t *testing.T) {

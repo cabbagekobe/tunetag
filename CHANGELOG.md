@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **mp4: `WriteFile` no longer corrupts files whose `free` atom is not
+  directly after `ilst`.** `parseMeta` recorded any `free`/`skip` inside
+  `meta`, so the Tier 1 absorb path rewrote the bytes right after the new
+  `ilst` even when other boxes sat there — the `hdlr ilst uuid… free`
+  layout of iTunes Store purchases, or `hdlr free ilst`. That clobbered
+  the intervening boxes and left a stale tail (the old `free` body) that
+  strict readers reject as a malformed box. Only a `free`/`skip` that
+  immediately follows `ilst` is now eligible for absorption; every other
+  layout falls through to the full rewrite, which preserves the sibling
+  boxes byte-for-byte. The "trailing zero padding" tolerated since 0.2.1
+  was this bug's own leftover, not something iTunes writes.
+
 ## [0.2.1] - 2026-07-22
 
 ### Fixed
