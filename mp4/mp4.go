@@ -186,9 +186,14 @@ func (f *File) parseMeta(metaBody []byte, metaBodyOff int) error {
 			}
 			f.Tag = parsed
 		}
-		// Track sibling `free`/`skip` inside meta, the most common
-		// place writers reserve scratch space for retag operations.
-		if typ.Equal("free") || typ.Equal("skip") {
+		// Track a `free`/`skip` that sits immediately after ilst, the
+		// most common place writers reserve scratch space for retag
+		// operations. A free elsewhere in meta (before ilst, or after
+		// intervening boxes such as iTunes Store `uuid` atoms) must not
+		// be absorbed: absorbWithFree rewrites the bytes directly after
+		// ilst, so it would clobber those boxes and leave a stale tail.
+		if (typ.Equal("free") || typ.Equal("skip")) &&
+			f.ilstFound && f.ilstOff+f.ilstLen == metaBodyOff+pos {
 			f.freeOff = metaBodyOff + pos
 			f.freeLen = int(size)
 		}
