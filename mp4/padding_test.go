@@ -58,14 +58,62 @@ func TestRead_MetaSubHeaderZeroPadding(t *testing.T) {
 }
 
 func TestSplitChild_MidStreamZeroSize(t *testing.T) {
-	// A zero size field followed by non-zero bytes is malformed, not trailing
-	// padding: splitChild must error rather than silently ending the walk and
-	// dropping the sibling that follows.
-	buf := append([]byte{0, 0, 0, 0}, tbox("free", nil)...)
+	// A zero size field followed by a real (non-free) box is malformed, not
+	// trailing padding: splitChild must error rather than silently ending
+	// the walk and dropping the sibling that follows.
+	buf := append([]byte{0, 0, 0, 0}, ilstWithTitle("x")...)
 	if _, _, _, err := splitChild(buf, 0); err == nil {
 		t.Fatal("expected error: zero-size box with trailing non-zero bytes")
 	} else if errors.Is(err, errPaddingBox) {
 		t.Fatalf("mid-stream zero-size must not be treated as padding: %v", err)
+	}
+}
+
+// buildWithMetaPaddingAndStrayFree mirrors what iTunes leaves after ilst in
+// some files: a free atom, then raw zeros, then another free header, then
+// more raw zeros — all inside the over-declared meta box.
+func buildWithMetaPaddingAndStrayFree(title string) []byte {
+	return buildWithMetaChildren(
+		ilstWithTitle(title),
+		tbox("free", make([]byte, 16)),
+		make([]byte, 24),
+		tbox("free", make([]byte, 8)),
+		make([]byte, 12),
+	)
+}
+
+func TestRead_MetaZeroPaddingWithStrayFree(t *testing.T) {
+	raw := buildWithMetaPaddingAndStrayFree("Hello")
+	p := writeTempMP4(t, raw)
+
+	f, err := Read(p)
+	if err != nil {
+		t.Fatalf("Read failed on meta with zero padding and a stray free: %v", err)
+	}
+	if got := f.Tag.Title(); got != "Hello" {
+		t.Errorf("Title = %q, want %q", got, "Hello")
+	}
+}
+
+func TestWriteFile_MetaZeroPaddingWithStrayFree(t *testing.T) {
+	raw := buildWithMetaPaddingAndStrayFree("Hello")
+	p := writeTempMP4(t, raw)
+
+	f, err := Read(p)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	f.Tag.SetTitle("Changed")
+	if err := f.WriteFile(p); err != nil {
+		t.Fatalf("WriteFile on padded file: %v", err)
+	}
+
+	f2, err := Read(p)
+	if err != nil {
+		t.Fatalf("Read after write: %v", err)
+	}
+	if got := f2.Tag.Title(); got != "Changed" {
+		t.Errorf("Title after round-trip = %q, want %q", got, "Changed")
 	}
 }
 
