@@ -206,12 +206,15 @@ func (f *File) parseMeta(metaBody []byte, metaBodyOff int) error {
 // its total size, type, body slice (referencing buf), and error.
 func splitChild(buf []byte, pos int) (size uint32, typ FourCC, body []byte, err error) {
 	// iTunes / Apple Music.app leave raw zero padding inside over-declared
-	// meta/udta boxes. Any all-zero tail — even 1–7 bytes, which would
-	// otherwise trip the truncated-header check below — is that padding:
-	// signal a clean end-of-children. Requiring the whole tail to be zero
-	// keeps a genuine mid-stream corruption (zero size followed by real
-	// bytes) an error, so the walkers never silently drop later siblings.
-	if allZero(buf[pos:]) {
+	// meta/udta boxes, sometimes with a stray free header in the middle of
+	// the zeros. A tail that opens with a zero size field — even 1–7 bytes,
+	// which would otherwise trip the truncated-header check below — and
+	// holds nothing but zeros and free/skip boxes is that padding: signal a
+	// clean end-of-children. A genuine mid-stream corruption (zero size
+	// followed by a real box) stays an error, so the walkers never silently
+	// drop later siblings. A tail opening with a real box (including a
+	// free) is never padding, so a writer-reserved free is still walked.
+	if zeroSizeAt(buf, pos) && isTailPadding(buf[pos:]) {
 		return 0, FourCC{}, nil, errPaddingBox
 	}
 	if pos+8 > len(buf) {
@@ -234,15 +237,52 @@ func splitChild(buf []byte, pos int) (size uint32, typ FourCC, body []byte, err 
 	return rawSize, typ, body, nil
 }
 
-// allZero reports whether every byte of b is zero. It short-circuits on the
-// first non-zero byte, so walking normal (non-padding) boxes stays cheap.
-func allZero(b []byte) bool {
-	for _, c := range b {
+// zeroSizeAt reports whether the (possibly truncated) size field at b[pos]
+// is all zero.
+func zeroSizeAt(b []byte, pos int) bool {
+	for _, c := range b[pos:min(pos+4, len(b))] {
 		if c != 0 {
 			return false
 		}
 	}
 	return true
+}
+
+// isTailPadding reports whether b holds nothing but zero bytes and
+// free/skip boxes: the scratch space iTunes leaves at the end of an
+// over-declared container. It short-circuits on the first byte that is
+// neither, so walking normal (non-padding) boxes stays cheap.
+func isTailPadding(b []byte) bool {
+	for pos := 0; pos < len(b); {
+		// Check for a free/skip header before skipping zeros: its size
+		// field starts with zero bytes that must not be eaten as padding.
+		if size, ok := freeBoxAt(b, pos); ok {
+			pos += min(size, len(b)-pos) // a free that overruns its parent still ends the tail
+			continue
+		}
+		if b[pos] != 0 {
+			return false
+		}
+		pos++
+	}
+	return true
+}
+
+// freeBoxAt reports whether a free/skip box header starts at b[pos],
+// returning its declared size.
+func freeBoxAt(b []byte, pos int) (int, bool) {
+	if pos+8 > len(b) {
+		return 0, false
+	}
+	typ := string(b[pos+4 : pos+8])
+	if typ != "free" && typ != "skip" {
+		return 0, false
+	}
+	size := int(uint32(b[pos])<<24 | uint32(b[pos+1])<<16 | uint32(b[pos+2])<<8 | uint32(b[pos+3]))
+	if size < 8 {
+		return 0, false
+	}
+	return size, true
 }
 
 // WriteFile writes f back to path. The strategy ladder is:

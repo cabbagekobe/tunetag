@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **mp4: `Read` no longer fails on iTunes padding that contains a stray
+  `free` header.** Some iTunes-written files end `meta` with raw zeros,
+  then a `free` box header, then more raw zeros. `splitChild` accepted
+  only an all-zero tail as padding and rejected this shape as a
+  mid-stream zero-size box, so the whole tag read failed. A tail that
+  opens with a zero size field and holds nothing but zeros and
+  `free`/`skip` boxes is now treated as padding; a zero size followed by
+  a real box is still an error.
+
 ## [0.2.2] - 2026-09-24
 
 ### Fixed
